@@ -1,0 +1,50 @@
+Hello,
+
+Here is the proposed direction for our fictional communications drawer.
+
+THE FEED
+
+Keep everything together in one chronological feed. Work, personal mail and
+supported conversations should share a visual language. Source names help us
+understand context, but should not compete for attention with different brand
+colours. Focus profiles filter the same feed.
+
+THE COMPOSER
+
+The place where a reply will go should always be obvious. Start a draft here,
+then select another message. Notice how the reply header stays with this
+conversation while the preview changes. An attachment alone also locks it.
+
+Clearing the text does not unlock the target. Use an explicit discard or
+save-and-switch action when you want to change the conversation you are editing.
+
+READING
+
+Longer conversations deserve room. The reader can show the complete message
+without borrowing the drawer's reply context. Search, scroll and close it:
+the draft should still be exactly where you left it.
+
+VISUAL RHYTHM
+
+Use space rather than boxes. A restrained shared palette, soft selection
+surfaces and small braille activity indicators can make the interface feel
+alive without making it busy. Reduced motion should always be available.
+
+ATTACHMENTS
+
+The prototype uses a harmless text fixture. File-manager copy/paste and image
+graphics come in later milestones, after the draft lifecycle is proven.
+
+NEXT REVIEW
+
+1. Type a multiline reply, including café, 東京 and 👩🏽‍💻.
+2. Browse another message and change the focus profile.
+3. Add a fixture attachment and simulate an incoming message.
+4. Exercise mock success, failure and uncertain acceptance.
+5. Quit and reopen the same demo data directory to restore the draft.
+
+No mail or messaging provider is connected. All sends in this prototype are
+local simulations, and all people and addresses are fictional.
+
+Thanks,
+Sasha

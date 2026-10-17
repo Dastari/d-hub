@@ -1,0 +1,86 @@
+# Proposed d-hub configuration fixture. Not consumed by an implementation yet.
+schema_version = 1
+profile = "drawer"
+
+[feed]
+focus = "work"
+sort = "incoming_timestamp_desc"
+unread_only = true
+group_threads = true
+mark_read_on_preview = false
+
+[drawer]
+width_columns = 52
+insert_on_focus = true
+
+[composer]
+follow_latest_when_inactive = true
+reply_mode = "sender"
+send_key = "ctrl+enter"
+send_fallback_key = "alt+enter"
+# Target locking and draft persistence are mandatory application invariants.
+
+[attachments]
+rich_paste_key = "ctrl+v"
+snapshot_into_draft = true
+auto_download = false
+allow_remote_images = false
+
+[preview]
+launcher = "ghostty"
+prefer_reuse_window = true
+mode = "tui"
+
+[appearance]
+theme = "dastari-dark"
+density = "compact"
+icons = "unicode"
+reduced_motion = false
+follow_omarchy_theme = false
+
+[input]
+navigation = "vim-and-arrows"
+mouse = true
+prefix_timeout_ms = 500
+
+[ai]
+enabled = false
+decision_provider = "jev"
+summary_enabled = false
+timeout_ms = 3000
+include_attachment_bytes = false
+# Models/endpoints are selected in setup from verified provider documentation.
+
+[notifications]
+enabled = true
+respect_desktop_dnd = true
+preview_privacy = "sender-only"
+suppress_when_reading_conversation = true
+group_by_conversation = true
+cooldown_seconds = 10
+quiet_hours_enabled = false
+quiet_hours_start = "22:00"
+quiet_hours_end = "07:00"
+quiet_hours_timezone = "Australia/Hobart"
+
+[sounds]
+enabled = true
+volume = 0.4
+respect_desktop_dnd = true
+send_success_enabled = false
+incoming = "default-message"
+priority = "default-priority"
+send_failure = "default-error"
+
+[privacy]
+log_message_bodies = false
+log_level = "info"
+
+[[focus_profiles]]
+name = "work"
+description = "Messages requiring attention for current work"
+unknown_decision_policy = "show"
+ai_enabled = false
+
+# Accounts and secret references are added by the setup UI/CLI.
+# Never put real credentials or live message content in this example.

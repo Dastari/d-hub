@@ -1,0 +1,2 @@
+Fictional attachment for the offline d-hub demo.
+Use spacing, a shared palette and subtle motion instead of heavy borders.

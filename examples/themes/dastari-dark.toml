@@ -1,0 +1,33 @@
+# Proposed semantic theme fixture. Not a generated Omarchy theme.
+schema_version = 1
+name = "dastari-dark"
+description = "Compact dark TUI with restrained blue and violet accents"
+
+[colors]
+background = "#111318"
+surface = "#1B1F29"
+text = "#E6EAF2"
+muted = "#A2ABBD"
+accent = "#91B8FF"
+selection = "#293A57"
+unread = "#B9CFFF"
+urgent = "#FFAE80"
+warning = "#F3D58A"
+error = "#FFA1AB"
+success = "#9EDFB2"
+draft_lock = "#D1B4FF"
+attachment = "#9EDCE5"
+source_label = "#ADB8CC"
+
+[style]
+borders = "none"
+icons = "unicode"
+density = "compact"
+reduced_motion = false
+
+[symbols]
+unread = "●"
+draft_lock = "◆"
+attachment = "+"
+remove = "×"
+pending = "…"

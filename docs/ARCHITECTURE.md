@@ -1,0 +1,72 @@
+# d-hub technical architecture
+
+Use Rust with Ratatui and Crossterm for the TUI, SQLite for persistent local state, and an asynchronous background service for provider work. The architecture separates deterministic interaction state from remote integrations so the first prototype can run entirely offline.
+
+## Process model
+
+```mermaid
+flowchart LR
+    Drawer[Drawer TUI] <--> IPC[Versioned Unix socket API]
+    Reader[Ghostty reader TUI] <--> IPC
+    CLI[CLI and settings] <--> IPC
+    IPC <--> Core[Background service]
+    Core <--> DB[(SQLite and private attachments)]
+    Core <--> Providers[Mail and messaging adapters]
+    Core <--> AI[Decision and summary adapters]
+    Core --> Alerts[Desktop notifications and audio]
+```
+
+One service owns provider sessions, sync cursors, database writes, outbox operations and alerts. TUI windows subscribe to sequenced events and request commands. The service works without a window; later supply an optional systemd user unit, enabled through an explicit setup action.
+
+An optional QML Omarchy companion plugin is another client of the same versioned local API, directly or through a narrow typed CLI bridge. It displays unread/connection status, activates the Ghostty drawer and requests focus-profile changes. It does not own provider sessions, database writes, drafts, sends or alerts. The Rust service runs outside the Quickshell process so plugin reload/disable and shell restart do not terminate communications work. Reconnection obtains a fresh snapshot before showing current status; disconnected or stale status is explicit.
+
+Use a user-private Unix socket under XDG_RUNTIME_DIR with permission and peer-identity checks, protocol version negotiation, bounded payloads and structured errors. Start with JSON messages if that keeps debugging simple. On disconnect, reconnect and request a consistent snapshot plus subsequent events rather than assuming no events were missed. Prevent concurrent daemon start with an exclusive lock. Migrate the database before accepting clients.
+
+## Suggested code organisation
+
+Start with one Cargo package and focused modules; split into workspace crates only when it improves boundaries. Suggested modules: domain, composer, storage, service, ipc, providers, ai, notifications, clipboard, config, commands, theme, tui and launch. Keep companion QML/manifest sources under `integrations/omarchy/`, separate from Rust modules. Avoid a large provider plugin framework before two concrete providers prove the interface; the Omarchy companion uses the desktop's existing plugin mechanism.
+
+Select compatible current versions of Ratatui, Crossterm, ratatui-image, an async runtime, clap, serde/TOML and SQLite bindings. Record the choice in Cargo.lock. Do not freeze version guesses from this planning document. Implement image resizing and encoding off the render thread. Use dirty-state redraws and terminal synchronized output where supported.
+
+## Domain records
+
+| Record | Essential data |
+| --- | --- |
+| Account | Stable local ID, provider, display identity, secret reference, capabilities, enabled state |
+| Conversation | Account ID, remote ID, participants, subject/channel, latest incoming time |
+| Message | Local ID, provider ID, conversation, sender/recipients, provider time, observed time, body refs, direction, unread state, revision |
+| Attachment | Message/draft association, MIME, safe filename, size, private local blob/ref, download/upload state |
+| Draft | Immutable target snapshot, body, attachment refs, revision, editor lease, saved time, lock state |
+| OutboxOperation | Operation UUID, draft revision, target, payload hash, status, provider reference, reconciliation state |
+| SyncCursor | Account/resource cursor, last success, backfill boundary, retry state |
+| Classification | Message/conversation revision, focus version, provider/model/questions version, typed answers, timestamps |
+| Summary | Conversation revision, provider/model/prompt version, generated text, stale flag |
+| AlertLedger | Event identity, policy version, popup/sound outcomes and grouping reference |
+
+Use uniqueness constraints for provider identity and sync idempotence. Store UTC timestamps; do not sort by local strings. Separate server unread flags from local seen, dismissed and snoozed state. Keep normalized provider capabilities, e.g. read, reply, mark-read, upload, server-unread, history, rather than scattered provider name checks.
+
+## Sending and persistence
+
+Persist an outbox operation before network submission and bind it to a draft revision. Freeze editing of the submitted revision or explicitly fork a new draft. Double keypresses share the same operation. Provider acceptance is not a delivery receipt. Model queued, uploading, submitting, accepted, failed and uncertain states honestly.
+
+A network timeout after submitting is not proof of failure. Use a provider's idempotency or lookup mechanism if available; otherwise surface uncertainty and require an intentional retry. Never automatically resend non-idempotent operations after restart. IMAP SMTP sending and saving a Sent copy are separate operations and must not duplicate each other.
+
+Draft body and attachment associations should be transactionally consistent. Stage copied attachment bytes first, atomically attach the completed blob, and garbage-collect unreferenced staged content later. Persist after edits with bounded debounce and flush on focus transitions/exit where possible; test crash recovery. Default user-private state/cache permissions. Encryption at rest is a later explicit design choice, not a claim implied by file permissions.
+
+## Synchronisation and AI
+
+Each adapter runs independent bounded tasks with backoff, jitter, rate-limit handling and cancellation. No slow account blocks the other sources. Use provider incremental sync mechanisms when available, with polling fallback appropriate to API limits. Backfill is distinguishable from a live arrival and cannot trigger an alert storm.
+
+AI jobs are asynchronous and cached by content/focus/question revision. Ignore stale completions. Decision failures leave deterministic rules usable. Do not assume probability fields have identical calibration across providers. Summary generation is separate from typed decisions. Message content is input data, never authority to invoke commands, alter settings or send replies.
+
+## Desktop integration
+
+Clipboard access uses Wayland MIME data, not only terminal paste events. Keep the clipboard owner/provider alive when exporting file URIs. Use explicit subprocess argv or native bindings for external helpers; never interpolate message text, filenames or notification arguments into a shell command.
+
+Use the freedesktop notification D-Bus API with stable app identity and default click action. Add a narrow Omarchy adapter for DND and desktop behaviour. Play audio through an appropriate available audio facility and enforce the same suppression policy before playback. Do not use terminal BEL as the default alert sound.
+
+The companion plugin controls the existing Ghostty TUI rather than rendering the communications feed or composer in QML. Route drawer activation through one launch/focus path shared with notification actions. Activation alone never selects a different reply target. Keep Omarchy theme, DND and window compatibility inside the desktop adapter, with conservative fallback when unavailable. The standalone application and offline demo must not require the plugin or a running Omarchy shell.
+
+## Verification strategy
+
+Unit-test the pure composer reducer and focus predicate. Integration-test database migrations, outbox recovery, draft leases, event replay, clipboard fixtures and provider translation contracts. Use fake services for failures and pagination. Smoke-test actual Ghostty rendering, focus, keyboard sequences, Wayland clipboard, reader spawning and Omarchy alerts on the owner desktop. A remote headless development box cannot establish those desktop behaviours by itself.
