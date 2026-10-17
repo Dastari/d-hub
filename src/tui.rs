@@ -32,7 +32,7 @@ use std::{
 };
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const HELP: &str = "COMPOSE\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  d              discard with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  motion · preview · help · quit\n\nAll messages are fictional. Sends never contact a provider.\nImages, live accounts, daemon IPC and the Omarchy plugin are later milestones.";
+const HELP: &str = "COMPOSE\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, Discord, Teams, Email, iCloud, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  d              discard with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  motion · preview · help · quit\n\nAll messages are fictional. Sends never contact a provider.\nImages, live accounts, daemon IPC and the Omarchy plugin are later milestones.";
 const COMMANDS: &[&str] = &[
     "attach",
     "remove",
@@ -48,6 +48,12 @@ const COMMANDS: &[&str] = &[
     "focus all",
     "focus work",
     "focus personal",
+    "source all",
+    "source discord",
+    "source teams",
+    "source email",
+    "source icloud",
+    "source office365",
     "theme midnight",
     "theme dusk",
     "motion",
@@ -233,8 +239,12 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {} ", app.settings.focus.label()),
+            format!(" ‹ {} › ", app.settings.source.label()),
             Style::default().fg(p.accent).bg(p.surface),
+        ),
+        Span::styled(
+            format!(" · {}", app.settings.focus.label()),
+            Style::default().fg(p.muted),
         ),
         Span::styled("  OFFLINE DEMO", Style::default().fg(p.muted)),
     ]);
@@ -281,7 +291,14 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             }))
         })
         .collect();
-    frame.render_widget(List::new(items), parts[1]);
+    if items.is_empty() {
+        frame.render_widget(
+            text("No messages match this source/focus.", p.muted),
+            parts[1],
+        );
+    } else {
+        frame.render_widget(List::new(items), parts[1]);
+    }
 
     let preview = app
         .selected_message()
@@ -691,6 +708,10 @@ fn run_command(app: &mut App, command: &str) -> bool {
             Ok(()) => app.set_focus(app.settings.focus),
             Err(e) => app.notice = e.to_string(),
         },
+        ["source", value] => match app.settings.set("source", value) {
+            Ok(()) => app.set_source(app.settings.source),
+            Err(e) => app.notice = e.to_string(),
+        },
         ["theme", value] => {
             if let Err(e) = app.settings.set("theme", value) {
                 app.notice = e.to_string();
@@ -860,6 +881,8 @@ fn key(
                 if app.settings.set(setting.name, value).is_ok() {
                     if setting.name == "focus" {
                         app.set_focus(app.settings.focus);
+                    } else if setting.name == "source" {
+                        app.set_source(app.settings.source);
                     }
                     app.notice = format!("{} saved as {}", setting.name, value);
                 }
@@ -888,8 +911,17 @@ fn key(
             _ => {}
         },
         Mode::Navigate => match key.code {
+            KeyCode::Left => app.set_source(app.settings.source.cycle(true)),
+            KeyCode::Right => app.set_source(app.settings.source.cycle(false)),
             KeyCode::Char('q') => return true,
-            KeyCode::Char('i' | 'r') => app.mode = Mode::Insert,
+            KeyCode::Char('i' | 'r') => {
+                if app.session.composer.draft.is_none()
+                    && let Some(id) = app.selected
+                {
+                    app.select(id);
+                }
+                app.mode = Mode::Insert;
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.move_selection(1, rows);
                 app.new_items = 0;
@@ -1124,4 +1156,76 @@ pub fn reader(id: crate::domain::MessageId, settings: Settings) -> Result<()> {
     app.reader = Some(message);
     app.mode = Mode::Reader;
     run(app, None, None, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::Session, domain::SourceFilter};
+
+    #[test]
+    fn arrows_cycle_sources_in_navigation_but_move_the_insert_cursor() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.mode = Mode::Navigate;
+        let mut pending = None;
+        let mut prefix = None;
+        for expected in SourceFilter::ALL
+            .into_iter()
+            .skip(1)
+            .chain([SourceFilter::All])
+        {
+            key(
+                &mut app,
+                KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+                4,
+                &mut pending,
+                &mut prefix,
+                None,
+            );
+            assert_eq!(app.settings.source, expected);
+        }
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.settings.source, SourceFilter::Office365);
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(
+            app.session.composer.reply_target().unwrap().provider,
+            crate::domain::Provider::Office365
+        );
+        app.editor = Editor::new("café");
+        let cursor = app.editor.cursor;
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.editor.cursor, cursor - 'é'.len_utf8());
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.editor.cursor, cursor);
+        assert_eq!(app.settings.source, SourceFilter::Office365);
+    }
 }

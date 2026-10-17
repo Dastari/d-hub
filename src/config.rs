@@ -1,4 +1,7 @@
-use crate::{domain::Focus, storage::write_private};
+use crate::{
+    domain::{Focus, SourceFilter},
+    storage::write_private,
+};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,6 +37,7 @@ impl Theme {
 pub struct Settings {
     pub schema_version: u32,
     pub focus: Focus,
+    pub source: SourceFilter,
     pub theme: Theme,
     pub reduced_motion: bool,
     pub insert_on_focus: bool,
@@ -46,6 +50,7 @@ impl Default for Settings {
         Self {
             schema_version: 1,
             focus: Focus::All,
+            source: SourceFilter::All,
             theme: Theme::Midnight,
             reduced_motion: false,
             insert_on_focus: true,
@@ -63,6 +68,7 @@ pub enum Key {
     InsertOnFocus,
     PaddingHorizontal,
     PaddingVertical,
+    Source,
 }
 
 pub struct Setting {
@@ -113,6 +119,12 @@ pub const REGISTRY: &[Setting] = &[
         help: "Outer top/bottom padding in terminal rows",
         choices: PADDING_CHOICES,
     },
+    Setting {
+        key: Key::Source,
+        name: "source",
+        help: "Source filter within the chronological feed",
+        choices: &["all", "discord", "teams", "email", "icloud", "office365"],
+    },
 ];
 
 impl Settings {
@@ -150,6 +162,7 @@ impl Settings {
     pub fn get(&self, key: Key) -> String {
         match key {
             Key::Focus => self.focus.label().into(),
+            Key::Source => self.source.value().into(),
             Key::Theme => self.theme.label().into(),
             Key::ReducedMotion => self.reduced_motion.to_string(),
             Key::InsertOnFocus => self.insert_on_focus.to_string(),
@@ -182,6 +195,12 @@ impl Settings {
             Key::InsertOnFocus => self.insert_on_focus = value == "true",
             Key::PaddingHorizontal => self.padding_horizontal = value.parse()?,
             Key::PaddingVertical => self.padding_vertical = value.parse()?,
+            Key::Source => {
+                self.source = SourceFilter::ALL
+                    .into_iter()
+                    .find(|source| source.value() == value)
+                    .context("invalid source")?
+            }
         }
         Ok(())
     }

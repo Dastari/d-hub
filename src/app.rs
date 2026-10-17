@@ -1,7 +1,7 @@
 use crate::{
     composer::{Composer, Draft, Event, SendState, Submission},
     config::Settings,
-    domain::{Focus, Message, MessageId},
+    domain::{Focus, Message, MessageId, SourceFilter},
     editor::Editor,
     fixtures,
 };
@@ -100,6 +100,7 @@ impl App {
         if !app.settings.insert_on_focus {
             app.mode = Mode::Navigate;
         }
+        app.reconcile_filters();
         Ok(app)
     }
 
@@ -111,6 +112,7 @@ impl App {
             .iter()
             .filter(|m| {
                 m.matches(self.settings.focus)
+                    && m.matches_source(self.settings.source)
                     && (query.is_empty()
                         || format!("{} {} {}", m.sender, m.subject, m.body)
                             .to_lowercase()
@@ -129,11 +131,11 @@ impl App {
     }
 
     pub fn latest(&self) -> Option<&Message> {
-        // Search only changes the viewport; the active focus determines follow eligibility.
+        // Search only changes the viewport; source and focus determine follow eligibility.
         self.session
             .messages
             .iter()
-            .filter(|m| m.eligible(self.settings.focus))
+            .filter(|m| m.eligible(self.settings.focus) && m.matches_source(self.settings.source))
             .max_by_key(|m| (m.timestamp, m.id))
     }
 
@@ -198,18 +200,36 @@ impl App {
 
     pub fn set_focus(&mut self, focus: Focus) {
         self.settings.focus = focus;
+        self.reconcile_filters();
+    }
+
+    pub fn set_source(&mut self, source: SourceFilter) {
+        self.settings.source = source;
+        self.reconcile_filters();
+        self.notice = format!(
+            "Source: {} · Left/Right cycles sources; f changes focus.",
+            source.label()
+        );
+    }
+
+    fn reconcile_filters(&mut self) {
         self.feed_offset = 0;
         if !self.focused {
             self.follow_latest();
         } else if self.session.composer.draft.is_none()
             && !self.session.composer.reply_target().is_some_and(|target| {
-                self.session
-                    .messages
-                    .iter()
-                    .any(|m| m.id == target.incoming && m.eligible(focus))
+                self.session.messages.iter().any(|m| {
+                    m.id == target.incoming
+                        && m.eligible(self.settings.focus)
+                        && m.matches_source(self.settings.source)
+                })
             })
         {
             self.session.composer.apply(Event::Select(None));
+        }
+        if !self.visible().iter().any(|m| Some(m.id) == self.selected) {
+            // Browsing a filtered feed is distinct from selecting a reply target.
+            self.selected = self.visible().first().map(|m| m.id);
         }
         // Never redirect a focused empty composer; clear an ineligible target instead.
     }

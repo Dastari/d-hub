@@ -161,7 +161,10 @@ fn outer_padding_defaults_to_zero_and_can_be_changed_without_touching_a_draft() 
 fn settings_keep_the_last_padding_control_visible_in_a_small_window() {
     let mut app = App::new(Session::default(), Settings::default()).unwrap();
     app.mode = Mode::Settings;
-    app.setting_index = d_hub::config::REGISTRY.len() - 1;
+    app.setting_index = d_hub::config::REGISTRY
+        .iter()
+        .position(|s| s.name == "padding_vertical")
+        .unwrap();
     let frame = tui::snapshot(&mut app, 28, 20).unwrap();
     assert!(frame.contains("padding_vertical"));
 }

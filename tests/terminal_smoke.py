@@ -15,6 +15,7 @@ import struct
 import tempfile
 import termios
 import time
+import tomllib
 
 
 BINARY = Path(__file__).resolve().parents[1] / "target/debug/d-hub"
@@ -117,6 +118,11 @@ def main():
             terminal.screen_action("q", b"NAV")
             assert state(directory)["composer"]["draft"]["target"] == target
             assert state(directory)["composer"]["draft"]["body"] == body
+            for arrow, source in [(b"\x1b[C", "discord"), (b"\x1b[C", "teams"), (b"\x1b[D", "discord"), (b"\x1b[D", "all")]:
+                terminal.send(arrow)
+                terminal.wait(lambda: tomllib.loads((directory / "config.toml").read_text()).get("source") == source, f"source {source}")
+                assert state(directory)["composer"]["draft"]["target"] == target
+                assert state(directory)["composer"]["draft"]["body"] == body
             for dimensions, marker in [((28, 16), b"d-hub"), ((20, 10), b"Resize"), ((80, 40), b"d-hub")]:
                 terminal.output.clear()
                 terminal.resize(*dimensions)
@@ -150,7 +156,7 @@ def main():
             terminal.close()
         finally:
             terminal.abort()
-    print("PTY smoke passed: paste, draft lock, attachment, navigation, preview, resize, reopen, mock outcomes, reconciliation and terminal restoration.")
+    print("PTY smoke passed: paste, draft lock, attachment, navigation, source cycling, preview, resize, reopen, mock outcomes, reconciliation and terminal restoration.")
 
 
 if __name__ == "__main__":

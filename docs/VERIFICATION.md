@@ -19,7 +19,7 @@ text controls. Real Kitty graphics and clipboard/file staging are pending.
 
 - `cargo fmt --check`: passed.
 - `cargo clippy --locked --all-targets -- -D warnings`: passed.
-- `cargo test --locked`: 36 tests passed.
+- `cargo test --locked`: 42 tests passed.
 - `cargo build --release --locked`: passed; release `--help` and `doctor --json`
   reported the offline command surface and pending capabilities correctly.
 - `python3 tests/terminal_smoke.py`: passed against the real debug executable in a
@@ -55,6 +55,13 @@ Outer padding defaults to zero. Checks cover loading older profiles without the
 new fields, CLI round trips and rejection of invalid padding, rendering the
 configured inset on both axes, the small-content fallback, visibility of padding
 controls in settings, and preservation of a locked draft during layout changes.
+
+Source filter checks cover navigation Left/Right wraparound, insert-mode cursor
+movement, combined Email sources, intersection with focus, empty results,
+inactive follow eligibility, unchanged drafts/submitted revisions, filtered
+preview restoration after reopening, and settings compatibility/persistence.
+The PTY test also drives real arrow escape sequences and checks persisted source
+changes while preserving a locked draft.
 
 The PTY smoke test additionally drives actual keyboard routing: bracketed Unicode
 paste, fixture attachment, selecting another message, arrival and filter changes,

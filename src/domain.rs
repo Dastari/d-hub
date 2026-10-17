@@ -24,6 +24,71 @@ impl Provider {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum SourceFilter {
+    #[default]
+    All,
+    Discord,
+    Teams,
+    Email,
+    ICloud,
+    Office365,
+}
+
+impl SourceFilter {
+    pub const ALL: [Self; 6] = [
+        Self::All,
+        Self::Discord,
+        Self::Teams,
+        Self::Email,
+        Self::ICloud,
+        Self::Office365,
+    ];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Discord => "discord",
+            Self::Teams => "teams",
+            Self::Email => "email",
+            Self::ICloud => "icloud",
+            Self::Office365 => "office365",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Discord => "Discord",
+            Self::Teams => "Teams",
+            Self::Email => "Email",
+            Self::ICloud => "iCloud",
+            Self::Office365 => "Office 365",
+        }
+    }
+
+    pub fn cycle(self, backwards: bool) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|source| *source == self)
+            .unwrap_or(0);
+        let offset = if backwards { Self::ALL.len() - 1 } else { 1 };
+        Self::ALL[(index + offset) % Self::ALL.len()]
+    }
+
+    pub fn matches(self, provider: Option<Provider>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Discord => provider == Some(Provider::Discord),
+            Self::Teams => provider == Some(Provider::Teams),
+            Self::Email => matches!(provider, Some(Provider::ICloud | Provider::Office365)),
+            Self::ICloud => provider == Some(Provider::ICloud),
+            Self::Office365 => provider == Some(Provider::Office365),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Focus {
     #[default]
     All,
@@ -92,6 +157,10 @@ pub struct Message {
 }
 
 impl Message {
+    pub fn matches_source(&self, source: SourceFilter) -> bool {
+        source.matches(self.target.as_ref().map(|target| target.provider))
+    }
+
     pub fn matches(&self, focus: Focus) -> bool {
         focus == Focus::All || self.focus == focus
     }

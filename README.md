@@ -26,6 +26,8 @@ cargo run --locked -- demo --data-dir ./demo-profile
 
 Every message is fictional and every send is a local simulation. The executable has no provider or network client code. Ctrl+q saves and exits; Escape enters navigation mode, where `?` opens help. In navigation, `j`/`k` or arrows browse, `f` changes focus, `a` adds a fixture attachment, `s` saves-and-switches drafts, `n` simulates incoming mail, and `,` opens settings. Insert mode keeps normal typing as text. Enter inserts a newline; F5 sends a mock reply, with Ctrl+Enter/Alt+Enter where the terminal distinguishes them. F7 cycles success/failure/uncertain outcomes.
 
+In navigation mode, Left/Right cycles the source filter in either direction: All, Discord, Teams, Email, iCloud and Office 365. Email combines both mail providers. The header shows the active source; source, Work/Personal focus and search filter the same chronological feed. Locked drafts keep their original recipient and attachments. In insert mode, Left/Right moves the text cursor. The source setting is also available through `config set source all|discord|teams|email|icloud|office365` or the settings TUI.
+
 `o` opens the selected message in the in-process reader; Ctrl+o requests a separate Ghostty fixture reader and falls back when Ghostty cannot be launched. The standalone reader can also run in another terminal:
 
 ```sh

@@ -45,6 +45,7 @@ Modes are navigation, composer insert, command entry and modal dialog. An option
 | Action | Proposed default | Scope |
 | --- | --- | --- |
 | Move selection | j/k, Up/Down | Navigation |
+| Cycle source filter | Left/Right | Navigation; text cursor movement in insert mode |
 | First/last | gg/G, Home/End | Navigation |
 | Scroll page | Ctrl+d/Ctrl+u, PageDown/PageUp | Feed or reader |
 | Focus next/previous pane | Tab/Shift+Tab | Outside text completion/dialog-specific use |
@@ -91,6 +92,8 @@ INSERT · Ctrl+Enter Send
 At very narrow widths, wrap safely and prioritise recipient, body and attachment count. At wider widths, expand preview naturally. Minimum usable dimensions and fallback message must be measured in the prototype. No account/source tabs appear at any width.
 
 Prefer spacing and subtle surface colours to enclosing boxes. Message sources share semantic colours; use labels for source identity. Slow accent colour shifts and braille activity indicators provide motion without rearranging content. Reduced motion uses static colours and activity labels.
+
+The header shows one active source filter, cycled with Left/Right in navigation mode: All, Discord, Teams, Email, iCloud and Office 365, wrapping in both directions. Email includes both mail providers. Source filters intersect with focus and search within the same feed. Filtering may change the previewed item, but cannot retarget an existing draft. A hidden empty target is cleared while focused; explicit message selection prepares a new reply. Inactive following uses the latest incoming item eligible under both source and focus. Empty combinations show a visible no-matches state.
 
 Outer padding is configurable per axis and defaults to zero. `padding_horizontal` applies equally to the left and right edges; `padding_vertical` applies equally to the top and bottom. Internal composer and dialog spacing remains separate. Layout and mouse hit regions use the same inset area; padding changes must preserve drafts and reply targets.
 
