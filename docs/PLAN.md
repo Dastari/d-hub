@@ -8,6 +8,16 @@ Deliver a standalone Rust application with an optional Omarchy companion plugin.
 
 The foundations and first offline TUI slice are implemented with locked dependencies, a deterministic composer, shared settings registry, fake send outcomes and isolated demo snapshot persistence. The interface follows the owner's minimal-border, shared-colour, animated-accent direction, with a reduced-motion option. A basic read-only fixture reader is available; the SQLite daemon, shared-reader IPC, image graphics and Omarchy companion remain future work. Actual target-desktop acceptance is pending. See [verification record](VERIFICATION.md) before treating milestone exit criteria as passed.
 
+## Owner requirements and current slice · 17 October 2026
+
+Personal Discord DMs are essential; server channels and bot conversations are secondary. The desired workflow is one arrival-ordered feed across services, opening any new DM into full conversation history and quick reply. A later full Discord client builds on that. Discord’s supported API does not currently supply the required personal-account inbox. Keep this as an unmet integration requirement; neither a bot demo nor notification capture closes it.
+
+The feed/settings slice adds source brand colours, filled/hollow unread/read markers, persistent seen/dismissal state, manual dismiss/restore (`e`), include-dismissed (`D`) and accepted-reply dismissal of the immutable original target. Failure/uncertainty never dismisses. Work and Home are editable profiles; arbitrary profiles carry independent decision prompts, with a separate global spam/promotion prompt. All settings share validated CLI/TUI persistence. Durable revision-checked read changes are ready for adapters; real remote sync is still pending.
+
+Account metadata, keyring storage, explicit Microsoft device setup and Jev/OpenAI decision adapters are implemented ahead of their broader milestones. Mail/Teams fetching/sending and owner live tests remain pending. An **optional**, explicitly selected Discord desktop notification bridge captures matching arrivals without credentials. It is read-only, does not recover full history or send replies, and cannot reliably deep-link the matching conversation. It does not satisfy the primary Discord acceptance criteria. Default Discord account mode retains the personal-client requirement.
+
+Keep milestone 2’s single background owner and IPC next; move optional capture into that owner before multiple live windows or alerts. Resolve personal Discord history/reply feasibility before describing Discord integration as complete. Do not downgrade the requirement to channels or notification previews.
+
 ## Milestone 0 Project foundations
 
 Verify Rust/toolchain availability on the development box, read project instructions and choose compatible crate versions. Scaffold the Cargo package, formatting/linting and focused tests. Define IDs, capabilities, composer events, error types and the typed settings registry. Add fake mixed-source messages, a long HTML/plain email and harmless attachment fixtures. Keep all sample people/content fictional.
@@ -72,9 +82,9 @@ Exit: desktop tests prove DND suppresses sounds and popups, one event alerts onc
 
 ## Milestone 9 Teams and feasible Discord support
 
-Resolve owner questions about Teams chats/channels and Discord DMs/server channels. Verify Graph permissions, tenant policy and Teams file-upload semantics before implementing the chosen scope. Implement a Discord bot integration only for authorised resources; personal-account automation is excluded. Make unsupported capabilities visible.
+The owner has resolved Discord scope: personal DMs with full history and quick reply are essential; channels are lower priority. Resolve supported personal access feasibility and the remaining Teams chats/channels scope. Verify Graph permissions, tenant policy and Teams file-upload semantics before implementing the chosen scope. Implement a Discord bot integration only for authorised resources; personal-account automation is excluded. Make unsupported capabilities visible.
 
-Exit: supported sources join the same feed and context model with honest capability reporting. Record a deliberate product decision for any unsupported personal DM requirement.
+Exit: supported sources join the same feed and context model with honest capability reporting. Discord acceptance requires personal DM arrivals, full history and quick reply; the optional notification bridge and bot support do not pass this criterion. If supported personal access remains unavailable, record the blocker explicitly and retain the unmet requirement.
 
 ## Milestone 10 Complete TUI workspaces
 

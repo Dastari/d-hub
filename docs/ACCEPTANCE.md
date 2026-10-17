@@ -77,3 +77,16 @@ Milestone 2a uses fictional messages and stub sends on the actual desktop. These
 ## Verification record template
 
 For each implemented milestone record command/test or manual steps, date, platform and terminal versions, result, fixture/account scope and unresolved limitation. Account tests use owner-authorised test recipients. Desktop tests must name the actual Ghostty/Omarchy environment; a headless build result does not establish clipboard, sound or window behaviour.
+
+## Personal Discord requirement and feed policy
+
+| ID | Scenario | Expected |
+| --- | --- | --- |
+| D01 | Owner receives a personal DM, especially from their son | New item joins the same feed in arrival order; channels/bot DMs are not a substitute |
+| D02 | Open a personal Discord feed item | Full DM conversation history and quick reply inside d-hub; currently unmet |
+| D03 | Optional notification mode is explicitly enabled | Capture matching desktop previews only; label missing history, in-app reply, remote unread and exact-conversation link; do not pass D01/D02 based on this fallback |
+| F01 | Explicitly select/open an unread item | Hollow read dot persists; pending remote flag intent is revision checked; remote sync remains pending real adapters |
+| F02 | Reply accepted while another item is selected | Dismiss the submitted target’s original incoming item, preserving the other item |
+| F03 | Reply fails or acceptance is uncertain | Keep original item and draft; do not dismiss or blindly resend |
+| F04 | Manually dismiss/restore, or include dismissed/spam | e/D/S work within source and focus filters; a locked draft keeps its complete target |
+| F05 | Edit profile/spam prompt during an in-flight decision | Reject stale result, retain draft, classify again under current policy or use local fallback |

@@ -85,7 +85,9 @@ fn json_never_opens_an_interactive_surface_and_doctor_reports_limits() {
     assert!(output.stdout.is_empty());
     let output = run(&path, &["doctor", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["network_access"], false);
+    assert_eq!(value["network_access"], true);
+    assert_eq!(value["demo_network_access"], false);
+    assert_eq!(value["discord_personal_history"], false);
     assert_eq!(value["omarchy_plugin"], false);
     assert_eq!(value["ghostty_desktop_verified"], false);
 }
@@ -146,4 +148,91 @@ fn padding_defaults_are_compatible_and_invalid_values_never_replace_config() {
         assert!(!run(&path, &["config", "validate"]).status.success());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
     }
+}
+
+#[test]
+fn profile_account_and_prompt_file_commands_use_the_shared_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    for args in [
+        vec!["profile", "add", "family"],
+        vec!["account", "add", "discord", "home-discord"],
+        vec!["config", "set", "focus", "family"],
+        vec![
+            "config",
+            "set",
+            "accounts.home-discord.notification_sender",
+            "Fictional Son",
+        ],
+    ] {
+        let output = run(&path, &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let prompt = dir.path().join("prompt.txt");
+    let text = "Is this about family?\nInclude personal conversations.";
+    std::fs::write(&prompt, text).unwrap();
+    assert!(
+        run(
+            &path,
+            &[
+                "config",
+                "set",
+                "profiles.family.prompt",
+                "--file",
+                prompt.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    let settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.value("profiles.family.prompt").unwrap(), text);
+    assert_eq!(settings.accounts[0].discord_mode, "personal");
+    let output = run(&path, &["account", "auth", "home-discord"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        !run(
+            &path,
+            &[
+                "config",
+                "set",
+                "accounts.home-discord.token",
+                "fictional-not-a-token"
+            ]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(
+        run(&path, &["profile", "remove", "family"])
+            .status
+            .success()
+    );
+    assert_eq!(Settings::load(&path).unwrap().focus, "all");
+}
+
+#[test]
+fn a_second_notification_window_cannot_start_another_capture_owner() {
+    use d_hub::storage::DemoStore;
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = dir.path().join("runtime");
+    let _owner = DemoStore::open(runtime.join("d-hub/notification-owner")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_d-hub"))
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .arg("--config")
+        .arg(dir.path().join("config.toml"))
+        .args(["notifications", "--data-dir"])
+        .arg(dir.path().join("different-profile"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("single notification capture owner"));
+    assert!(!dir.path().join("different-profile").exists());
 }

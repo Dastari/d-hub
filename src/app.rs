@@ -3,7 +3,8 @@ use crate::{
     config::Settings,
     domain::{Focus, Message, MessageId, SourceFilter},
     editor::Editor,
-    fixtures,
+    fixtures, policy,
+    read_state::{MessageState, ReadChange, ReadTransport},
 };
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,12 @@ pub struct Session {
     pub composer: Composer,
     pub saved: BTreeMap<String, Draft>,
     pub arrivals: u64,
+    #[serde(default)]
+    pub message_state: BTreeMap<MessageId, MessageState>,
+    #[serde(default)]
+    pub read_changes: BTreeMap<MessageId, ReadChange>,
+    #[serde(default)]
+    pub notification_ids: std::collections::BTreeSet<String>,
 }
 
 impl Default for Session {
@@ -26,6 +33,9 @@ impl Default for Session {
             composer: Composer::default(),
             saved: BTreeMap::new(),
             arrivals: 0,
+            message_state: BTreeMap::new(),
+            read_changes: BTreeMap::new(),
+            notification_ids: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -40,6 +50,8 @@ pub enum Mode {
     Settings,
     Discard,
     Reader,
+    EditSetting,
+    Secret,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +60,12 @@ pub enum MockOutcome {
     Failure,
     Uncertain,
 }
+
+pub type PendingDecision = (
+    MessageId,
+    String,
+    std::sync::mpsc::Receiver<Result<policy::Classification, String>>,
+);
 
 pub struct App {
     pub session: Session,
@@ -66,6 +84,15 @@ pub struct App {
     pub reader: Option<Message>,
     pub reader_scroll: u16,
     pub reader_query: String,
+    pub edit_key: Option<String>,
+    pub secret_ref: Option<String>,
+    pub auth_job: Option<std::sync::mpsc::Receiver<String>>,
+    pub live_setup: bool,
+    pub live_feed: bool,
+    pub bridge_ready: bool,
+    pub notifications: Option<std::sync::mpsc::Receiver<crate::discord_notifications::Event>>,
+    pub decision_job: Option<PendingDecision>,
+    pub decision_attempted: std::collections::BTreeSet<String>,
 }
 
 impl App {
@@ -74,6 +101,23 @@ impl App {
             bail!("unsupported demo state schema {}", session.schema_version);
         }
         session.composer.recover();
+        if settings.dismiss_after_reply {
+            for sent in &session.composer.sent {
+                let id = sent.draft.target.incoming;
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    session.message_state.entry(id)
+                {
+                    entry.insert(MessageState {
+                        seen: true,
+                        dismissed: true,
+                        ..MessageState::default()
+                    });
+                    if let Some(message) = session.messages.iter_mut().find(|m| m.id == id) {
+                        message.unread = false;
+                    }
+                }
+            }
+        }
         let editor = Editor::new(session.composer.body());
         let mut app = Self {
             session,
@@ -92,6 +136,15 @@ impl App {
             reader: None,
             reader_scroll: 0,
             reader_query: String::new(),
+            edit_key: None,
+            secret_ref: None,
+            auth_job: None,
+            live_setup: false,
+            live_feed: false,
+            bridge_ready: false,
+            notifications: None,
+            decision_job: None,
+            decision_attempted: std::collections::BTreeSet::new(),
         };
         app.follow_latest();
         if let Some(target) = app.session.composer.reply_target() {
@@ -111,8 +164,11 @@ impl App {
             .messages
             .iter()
             .filter(|m| {
-                m.matches(self.settings.focus)
+                self.profile_matches(m)
                     && m.matches_source(self.settings.source)
+                    && (self.settings.show_dismissed || !self.dismissed(m.id))
+                    && (self.settings.show_spam || !self.spam_match(m))
+                    && !self.hold_pending(m)
                     && (query.is_empty()
                         || format!("{} {} {}", m.sender, m.subject, m.body)
                             .to_lowercase()
@@ -135,7 +191,7 @@ impl App {
         self.session
             .messages
             .iter()
-            .filter(|m| m.eligible(self.settings.focus) && m.matches_source(self.settings.source))
+            .filter(|m| self.eligible(m))
             .max_by_key(|m| (m.timestamp, m.id))
     }
 
@@ -155,7 +211,9 @@ impl App {
         self.focused = focused;
         if !focused {
             self.follow_latest();
-        } else if self.settings.insert_on_focus
+        } else if !self.live_feed
+            && !self.live_setup
+            && self.settings.insert_on_focus
             && self.session.composer.draft.is_none()
             && matches!(self.mode, Mode::Insert | Mode::Navigate)
         {
@@ -178,6 +236,9 @@ impl App {
         }
         self.session.composer.apply(Event::Select(target));
         self.sync_editor();
+        if self.settings.mark_read_on_select {
+            self.set_unread(id, false);
+        }
     }
 
     pub fn move_selection(&mut self, delta: isize, rows: usize) {
@@ -199,7 +260,14 @@ impl App {
     }
 
     pub fn set_focus(&mut self, focus: Focus) {
-        self.settings.focus = focus;
+        self.set_profile(focus.label());
+    }
+
+    pub fn set_profile(&mut self, id: &str) {
+        if let Err(error) = self.settings.set("focus", id) {
+            self.notice = error.to_string();
+            return;
+        }
         self.reconcile_filters();
     }
 
@@ -218,11 +286,10 @@ impl App {
             self.follow_latest();
         } else if self.session.composer.draft.is_none()
             && !self.session.composer.reply_target().is_some_and(|target| {
-                self.session.messages.iter().any(|m| {
-                    m.id == target.incoming
-                        && m.eligible(self.settings.focus)
-                        && m.matches_source(self.settings.source)
-                })
+                self.session
+                    .messages
+                    .iter()
+                    .any(|m| m.id == target.incoming && self.eligible(m))
             })
         {
             self.session.composer.apply(Event::Select(None));
@@ -347,11 +414,377 @@ impl App {
     }
 
     pub fn open_reader(&mut self) {
+        if self.settings.mark_read_on_select
+            && let Some(id) = self.selected
+        {
+            self.set_unread(id, false);
+        }
         self.reader = self.selected_message().cloned();
         self.reader_scroll = 0;
         self.reader_query.clear();
         if self.reader.is_some() {
             self.mode = Mode::Reader;
         }
+    }
+
+    pub fn dismissed(&self, id: MessageId) -> bool {
+        self.session
+            .message_state
+            .get(&id)
+            .is_some_and(|s| s.dismissed)
+    }
+
+    pub fn classification(&self, message: &Message) -> Option<&policy::Classification> {
+        self.session
+            .message_state
+            .get(&message.id)
+            .and_then(|s| s.classification.as_ref())
+            .filter(|c| c.fingerprint == policy::fingerprint(message, &self.settings))
+    }
+
+    pub fn spam_match(&self, message: &Message) -> bool {
+        self.settings.spam.enabled
+            && (policy::matches_terms(message, &self.settings.spam.local_terms)
+                || self
+                    .classification(message)
+                    .is_some_and(|c| c.spam >= self.settings.spam.threshold))
+    }
+
+    fn profile_matches(&self, message: &Message) -> bool {
+        if self.settings.focus == "all" {
+            return true;
+        }
+        if let Some(c) = self.classification(message) {
+            return c
+                .profiles
+                .get(&self.settings.focus)
+                .is_none_or(|p| *p >= self.settings.ai.threshold);
+        }
+        let Some(profile) = self
+            .settings
+            .profiles
+            .iter()
+            .find(|p| p.id == self.settings.focus)
+        else {
+            return true;
+        };
+        if !profile.terms.is_empty() {
+            return policy::matches_terms(message, &profile.terms);
+        }
+        profile
+            .fixture_focus
+            .is_none_or(|focus| message.matches(focus))
+    }
+
+    fn eligible(&self, message: &Message) -> bool {
+        message.incoming
+            && message.target.is_some()
+            && self.profile_matches(message)
+            && message.matches_source(self.settings.source)
+            && !self.dismissed(message.id)
+            && !self.spam_match(message)
+            && !self.hold_pending(message)
+    }
+
+    pub fn toggle_dismissed(&mut self) {
+        if let Some(id) = self.selected {
+            let state = self.session.message_state.entry(id).or_default();
+            state.dismissed = !state.dismissed;
+            self.notice = if state.dismissed {
+                "Dismissed locally · D includes dismissed items; e restores one."
+            } else {
+                "Restored to the feed."
+            }
+            .into();
+            self.reconcile_filters();
+        }
+    }
+
+    pub fn toggle_show_dismissed(&mut self) {
+        self.settings.show_dismissed = !self.settings.show_dismissed;
+        self.reconcile_filters();
+        self.notice = if self.settings.show_dismissed {
+            "Dismissed messages included · e restores the selected item."
+        } else {
+            "Dismissed messages hidden."
+        }
+        .into();
+    }
+
+    pub fn refresh_filters(&mut self) {
+        self.reconcile_filters();
+    }
+
+    pub fn accepted(&mut self, operation: u64) {
+        let count = self.session.composer.sent.len();
+        self.session.composer.apply(Event::Accepted(operation));
+        if self.session.composer.sent.len() > count
+            && let Some(sent) = self.session.composer.sent.last()
+        {
+            let id = sent.draft.target.incoming;
+            self.set_unread(id, false);
+            if self.settings.dismiss_after_reply {
+                self.session.message_state.entry(id).or_default().dismissed = true;
+            }
+            self.reconcile_filters();
+        }
+        self.sync_editor();
+    }
+
+    pub fn set_unread(&mut self, id: MessageId, unread: bool) {
+        let Some(message) = self.session.messages.iter_mut().find(|m| m.id == id) else {
+            return;
+        };
+        let changed = message.unread != unread;
+        message.unread = unread;
+        let state = self.session.message_state.entry(id).or_default();
+        state.seen = !unread;
+        if !changed {
+            return;
+        }
+        state.revision += 1;
+        if let Some(remote) = &message.remote {
+            self.session.read_changes.insert(
+                id,
+                ReadChange {
+                    message: id,
+                    remote: remote.clone(),
+                    unread,
+                    revision: state.revision,
+                    error: None,
+                },
+            );
+        }
+    }
+
+    pub fn receive_unread(&mut self, id: MessageId, unread: bool) {
+        if self.session.read_changes.contains_key(&id) {
+            return;
+        }
+        if let Some(message) = self.session.messages.iter_mut().find(|m| m.id == id) {
+            message.unread = unread;
+            self.session.message_state.entry(id).or_default().seen = !unread;
+        }
+    }
+
+    pub fn acknowledge_read(&mut self, id: MessageId, revision: u64, result: Result<(), String>) {
+        if let Some(change) = self.session.read_changes.get_mut(&id)
+            && change.revision == revision
+        {
+            match result {
+                Ok(()) => {
+                    self.session.read_changes.remove(&id);
+                }
+                Err(error) => change.error = Some(crate::domain::safe_text(&error)),
+            }
+        }
+    }
+
+    pub fn sync_read_changes(&mut self, transport: &mut impl ReadTransport) {
+        for change in self
+            .session
+            .read_changes
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let result = transport.set_unread(&change.remote, change.unread);
+            self.acknowledge_read(change.message, change.revision, result);
+        }
+    }
+
+    pub fn apply_classification(&mut self, id: MessageId, result: policy::Classification) -> bool {
+        let Some(message) = self.session.messages.iter().find(|m| m.id == id) else {
+            return false;
+        };
+        if result.fingerprint != policy::fingerprint(message, &self.settings)
+            || !policy::probability(result.spam)
+            || result.profiles.values().any(|p| !policy::probability(*p))
+        {
+            return false;
+        }
+        let state = self.session.message_state.entry(id).or_default();
+        state.classification = Some(result);
+        state.classification_error = None;
+        self.reconcile_filters();
+        true
+    }
+
+    fn hold_pending(&self, message: &Message) -> bool {
+        self.live_feed
+            && self.settings.ai.hold_pending
+            && self.classification(message).is_none()
+            && self
+                .session
+                .message_state
+                .get(&message.id)
+                .is_none_or(|s| s.classification_error.is_none())
+            && crate::decisions::DecisionJob::build(message, &self.settings).is_ok()
+    }
+
+    pub fn ingest_notification(
+        &mut self,
+        event: &crate::discord_notifications::Notification,
+    ) -> bool {
+        if self.session.notification_ids.contains(&event.event_id) {
+            return false;
+        }
+        if self.session.messages.len() >= 2000 {
+            self.notice = "Notification snapshot limit reached; capture paused. Retain/export messages before restarting with a new profile.".into();
+            return false;
+        }
+        let id = MessageId(
+            self.session
+                .messages
+                .iter()
+                .map(|m| m.id.0)
+                .max()
+                .unwrap_or(1_000_000)
+                .saturating_add(1),
+        );
+        let timestamp = crate::discord_notifications::now().max(
+            self.session
+                .messages
+                .iter()
+                .map(|m| m.timestamp)
+                .max()
+                .unwrap_or(0),
+        );
+        let message = self
+            .settings
+            .accounts
+            .iter()
+            .find_map(|a| crate::discord_notifications::into_message(a, event, id, timestamp));
+        let Some(message) = message else {
+            return false;
+        };
+        let anchor = self.visible().get(self.feed_offset).map(|m| m.id);
+        self.session.messages.push(message);
+        self.session.notification_ids.insert(event.event_id.clone());
+        if !self.focused {
+            self.follow_latest();
+        } else {
+            self.new_items += 1;
+            if let Some(id) = anchor
+                && let Some(index) = self.visible().iter().position(|m| m.id == id)
+            {
+                self.feed_offset = index;
+            }
+        }
+        self.notice = "Discord notification captured · local seen/dismissal only · v opens the official client.".into();
+        true
+    }
+
+    pub fn poll_background(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(receiver) = self.auth_job.take() {
+            loop {
+                match receiver.try_recv() {
+                    Ok(notice) => {
+                        self.notice = notice;
+                        changed = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        self.auth_job = Some(receiver);
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+        if let Some(receiver) = self.notifications.take() {
+            let mut connected = true;
+            // Bound work per frame even during a notification burst.
+            for _ in 0..32 {
+                match receiver.try_recv() {
+                    Ok(crate::discord_notifications::Event::Ready) => {
+                        self.bridge_ready = true;
+                        self.notice = "Discord notification capture ready. Official client must emit desktop notifications.".into();
+                        changed = true;
+                    }
+                    Ok(crate::discord_notifications::Event::Notification(event)) => {
+                        changed |= self.ingest_notification(&event)
+                    }
+                    Ok(crate::discord_notifications::Event::Error(error)) => {
+                        self.bridge_ready = false;
+                        self.notice = error;
+                        changed = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        connected = false;
+                        if self.bridge_ready {
+                            self.bridge_ready = false;
+                            self.notice = "Discord notification stream disconnected; reopen capture to reconnect.".into();
+                            changed = true;
+                        }
+                        break;
+                    }
+                }
+            }
+            if connected {
+                self.notifications = Some(receiver);
+            }
+        }
+        if let Some((id, fingerprint, receiver)) = self.decision_job.take() {
+            match receiver.try_recv() {
+                Ok(Ok(result)) => {
+                    changed |= self.apply_classification(id, result);
+                }
+                Ok(Err(error)) => {
+                    if self.session.messages.iter().any(|m| {
+                        m.id == id && policy::fingerprint(m, &self.settings) == fingerprint
+                    }) {
+                        self.session
+                            .message_state
+                            .entry(id)
+                            .or_default()
+                            .classification_error = Some(error);
+                        self.reconcile_filters();
+                        changed = true;
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.decision_job = Some((id, fingerprint, receiver))
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if self.session.messages.iter().any(|m| {
+                        m.id == id && policy::fingerprint(m, &self.settings) == fingerprint
+                    }) {
+                        self.session
+                            .message_state
+                            .entry(id)
+                            .or_default()
+                            .classification_error =
+                            Some("Decision worker stopped; using local fallback.".into());
+                        self.reconcile_filters();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if self.live_feed && self.settings.ai.enabled && self.decision_job.is_none() {
+            let job = self
+                .session
+                .messages
+                .iter()
+                .filter(|m| !self.dismissed(m.id) && self.classification(m).is_none())
+                .find_map(|m| {
+                    let job = crate::decisions::DecisionJob::build(m, &self.settings).ok()?;
+                    (!self.decision_attempted.contains(&job.fingerprint)).then_some(job)
+                });
+            if let Some(job) = job {
+                let (tx, rx) = std::sync::mpsc::sync_channel(1);
+                self.decision_attempted.insert(job.fingerprint.clone());
+                self.decision_job = Some((job.message, job.fingerprint.clone(), rx));
+                std::thread::spawn(move || {
+                    let _ = tx.send(
+                        crate::decisions::evaluate(&job, &crate::decisions::HttpDecisions)
+                            .map_err(|_| "Decision unavailable; local rules remain active.".into()),
+                    );
+                });
+            }
+        }
+        changed
     }
 }

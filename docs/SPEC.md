@@ -21,6 +21,7 @@ d-hub is a personal communications hub for dastari. Its primary surface is a nar
 | THEME-01 | Custom Unicode/RGB themes, editable semantic styles and live preview | Demo onward, expand in first release |
 | ALERT-01 | Sounds, native Omarchy notifications, DND, quiet hours and per-focus alert policy | First usable release |
 | DESKTOP-01 | Optional Omarchy companion plugin for unread/connection status, Ghostty drawer activation and quick focus-profile actions, backed by the single d-hub service | Prototype after persistent service and reader; first usable release |
+| DISCORD-01 | Personal-account DMs are essential: append new arrivals to the shared feed in arrival order, open full DM history and reply quickly; bot channels or notification previews do not satisfy this | Required; supported access unresolved |
 | CLIENT-01 | Full TUI mail, Teams and Discord workspaces in additional windows | Later delivery |
 
 “First usable release” can be delivered in incremental milestones. Do not represent all integrations as complete merely because a shared interface or mock exists.
@@ -49,7 +50,7 @@ Full preview is a TUI reader, not a browser. Convert HTML email into a readable 
 
 Use Unicode box drawing, symbols, block elements and multilingual text, not legacy extended-ASCII encodings. Match width calculations to terminal behaviour and test wide characters, emoji, combining marks and pasted multiline text. Optional font icons need Unicode/text fallbacks. Truecolor and actual pixel images are separate capabilities.
 
-Aim for an AI-harness feel: open spacing, minimal borders, clear status, persistent composer, attachment chips, slash commands, a command palette and contextual shortcut hints. Use a consistent semantic palette across sources rather than provider brand colours. The owner prefers subtle animated colour shifts and braille spinners; keep motion restrained and tied to useful activity, with reduced motion available. Support sufficient contrast and redundant status cues beyond colour.
+Aim for an AI-harness feel: open spacing, minimal borders, clear status, persistent composer, attachment chips, slash commands, a command palette and contextual shortcut hints. Use consistent semantic success/error colours across sources, with distinct source colours for filled unread/hollow read dots and selected-message accents; Discord uses its blurple. The owner prefers subtle animated colour shifts and braille spinners; keep motion restrained and tied to useful activity, with reduced motion available. Support sufficient contrast and redundant status cues beyond colour.
 
 ## Attachments
 
@@ -71,7 +72,7 @@ Respect Omarchy DND for sounds as well as toasts. Clicking an alert selects its 
 
 ## Later full clients
 
-The full mail TUI should add folders, search, threading, composition, replies, forwarding, attachments and account management. Teams and Discord should add richer supported conversation/channel navigation and history. All use the same identities, drafts, settings and backend. This does not imply complete feature parity with every official client, voice/video support, or unrestricted Discord personal-account access.
+The full mail TUI should add folders, search, threading, composition, replies, forwarding, attachments and account management. Teams should add richer supported conversation/channel navigation and history. Discord must prioritise personal DM history and replies, then expand towards a full client; server channels are lower priority. All use the same identities, drafts, settings and backend. This does not imply complete feature parity with every official client, voice/video support, or unrestricted Discord personal-account access.
 
 ## Proposed performance targets
 

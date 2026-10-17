@@ -32,15 +32,21 @@ A local desktop has no public inbound webhook by default. Start with bounded pol
 
 Supported bot integrations are limited to resources the bot is authorised to access. Message content access, intents, permissions, bot identity and upload limits need explicit verification. A bot is not a transparent replacement for the owner's personal Discord session.
 
-Do not automate a normal user account or reuse a personal client token. Discord prohibits self-bots. Personal DMs to the owner are therefore an unresolved product capability, not a promised feature. Establish whether selected server channels and bot conversations satisfy the owner before implementation. See [Discord self-bot policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots) and [developer documentation](https://discord.com/developers/docs/intro).
+Do not automate a normal user account or reuse a personal client token. Discord prohibits self-bots. The owner has confirmed that personal DMs are essential, especially messages from their son; channels and bot conversations do not satisfy the requirement. Each new incoming DM must enter the shared feed in arrival order and open its full conversation history with quick reply, like mail/Teams. This capability remains unresolved with the supported API; a full personal Discord client is the longer-term requirement. See [Discord self-bot policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots) and [developer documentation](https://discord.com/developers/docs/intro).
 
-Use capability-specific UI for read, reply and upload. A notification-only fallback, if desired, must be labelled as such and must not claim authoritative full history, unread state or reply support.
+Use capability-specific UI for read, reply and upload. An optional notification bridge now exists under `d-hub notifications`. New Discord accounts default to the required but unavailable personal-client mode; capture needs explicit `discord_mode = "notifications"` and a configured exact notification title/sender. It monitors only configured app names on the desktop session bus, filters titles before persistence and stores bounded previews with local seen/dismissal state. Bus ID, sender connection and serial distinguish events; arrival timestamps and IDs order the feed. It emits no popups or sounds and does not alter DND or bus policy. Denied monitoring is a visible failure.
+
+This bridge does **not** meet the personal DM requirement. The official app must emit a desktop notification; muted/focused/suppressed messages and prior history cannot be recovered. Notification titles are mutable, unverified identities and may collide. `v` requests the official Discord DM list, with manual conversation selection; it cannot reliably open the exact DM from notification data. Read state is local only; no reply target is fabricated. Capture lasts only while its single-writer process runs, not a daemon. Target-desktop format, permissions and handoff remain unverified. The plan retains full personal history/reply as a separate unmet requirement.
 
 ## Typed decisions and summaries
 
 Jev and OpenAI Decisions are separate adapters behind a domain-level interface. Both provide typed question evaluation, but do not assume identical payloads or numeric confidence semantics. See [TypeSafe introduction](https://docs.typesafe.ai/introduction) and [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions).
 
-Suggested independent questions over sanitised message/context:
+Implemented adapters use Jev POST `https://api.typesafe.ai/v1/systemone` with `model`, `state` and named `noul` questions; OpenAI POST `https://api.openai.com/v1/decisions` with `model`, string `input` and named `predicate` questions. Defaults are `jev-latest` and `gpt-6-luna`, respectively, as documented on 17 October 2026. Responses must answer every question with a finite probability in [0,1]; refusals, duplicates, missing or unexpected types fail. Tests use fake outputs; no live latency/accuracy claims are made.
+
+The current question set is one independent global spam question plus one per configured focus profile. Context is bounded to sender (320 characters), subject (2,000), body (10,000) and source; no attachments or tool authority. Global and per-account consent are required before scheduling. A single worker avoids blocking the UI; errors show fallback content, and fingerprint checks reject stale results after message, prompt, model or policy changes. Demo never schedules these workers.
+
+Further independent questions planned over sanitised message/context:
 
 - Does the communication match the named focus criteria?
 - Does it explicitly require a response from the owner?

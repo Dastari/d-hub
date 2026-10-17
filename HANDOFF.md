@@ -1,6 +1,6 @@
 # d-hub implementation handoff
 
-The owner wants a dedicated TUI communications hub in a narrow Omarchy side window, with Ghostty as the primary terminal. The first offline Rust prototype is implemented; provider integrations and the background service have not started. The owner has authorised a public GitHub project at `dastari/d-hub`.
+The owner wants a dedicated TUI communications hub in a narrow Omarchy side window, with Ghostty as the primary terminal. The first offline Rust prototype is implemented; mail/Teams message transports and the background service remain pending. Account setup, typed AI decisions and an optional read-only Discord notification bridge now exist; see README and docs/VERIFICATION.md. The owner has authorised a public GitHub project at `dastari/d-hub`.
 
 ## Development environment
 
@@ -24,6 +24,8 @@ After milestone 2, build the Omarchy companion plugin prototype in milestone 2a 
 - Stack direction: Rust, Ratatui, Crossterm, terminal pixel graphics through the Kitty protocol.
 - Visual direction: minimal borders, open spacing, consistent semantic colours across sources, subtle animated colour shifts and braille activity indicators, with reduced motion available.
 - Sources: iCloud via IMAP, Office 365 mail, Teams and Discord, combined without source tabs.
+- Editable Work/Home and arbitrary focus profiles with per-profile prompts, plus an independent global promotional/spam exclusion policy.
+- Source brand colours, filled unread/hollow read dots, persistent seen state, accepted-reply dismissal, manual dismissal and show-dismissed access. Remote read syncing remains pending provider transports.
 - Focus profiles and AI decision filtering, with Jev from TypeSafe AI and OpenAI Decisions provider options. Optional AI summaries are a separate capability.
 - Dedicated context-aware reply box, automatic latest context while inactive and empty, draft locking, file/image paste and attachments.
 - Neovim-style keys alongside arrows and mouse; many configurable shortcuts and discoverable commands.
@@ -41,7 +43,7 @@ After milestone 2, build the Omarchy companion plugin prototype in milestone 2a 
 
 ## Questions for the owner before affected live integrations
 
-1. Is Discord required for personal DMs, server channels or both? Normal bot APIs cannot provide an arbitrary personal-account mirror. Do not use user-token automation.
+1. **Resolved Discord requirement:** personal DMs are the primary reason for d-hub, especially messages from the owner’s son. New messages must enter the shared feed in arrival order, with full DM history and quick replies on opening; later expand to a full Discord client. Channels/bot conversations are lower priority and do not satisfy this. Supported API access is unresolved. The explicit opt-in notification bridge is only interim, with no history, reply, remote unread or reliable conversation deep link. Do not silently substitute it or claim Discord complete.
 2. Which Office 365 tenant/account and Teams scope: personal/group chats, channels or both? App registration and consent may need tenant administration.
 3. Which messages/accounts may be sent to AI providers? Default to no external AI processing until configured per account.
 4. How should the drawer appear: manually sized window, toggled special workspace, or compositor-managed side panel? Which monitor and width?

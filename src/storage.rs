@@ -46,7 +46,7 @@ impl DemoStore {
             .mode(0o600)
             .open(directory.join(".demo.lock"))?;
         if lock.try_lock_exclusive().is_err() {
-            bail!("another demo owns this data directory; use a different --data-dir");
+            bail!("another d-hub process owns this directory");
         }
         Ok(Self {
             directory,

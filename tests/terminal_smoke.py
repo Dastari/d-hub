@@ -118,7 +118,7 @@ def main():
             terminal.screen_action("q", b"NAV")
             assert state(directory)["composer"]["draft"]["target"] == target
             assert state(directory)["composer"]["draft"]["body"] == body
-            for arrow, source in [(b"\x1b[C", "discord"), (b"\x1b[C", "teams"), (b"\x1b[D", "discord"), (b"\x1b[D", "all")]:
+            for arrow, source in [(b"\x1b[C", "icloud"), (b"\x1b[C", "discord"), (b"\x1b[C", "teams"), (b"\x1b[D", "discord"), (b"\x1b[D", "icloud"), (b"\x1b[D", "all")]:
                 terminal.send(arrow)
                 terminal.wait(lambda: tomllib.loads((directory / "config.toml").read_text()).get("source") == source, f"source {source}")
                 assert state(directory)["composer"]["draft"]["target"] == target

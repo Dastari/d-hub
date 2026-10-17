@@ -13,6 +13,8 @@ pub fn messages() -> Vec<Message> {
             id: MessageId(id), timestamp: 1_000 + id, time: format!("10:{:02}", 35 + id),
             sender: sender.into(), subject: subject.into(), body: body.into(), focus,
             unread: true, incoming: true,
+            remote: None,
+            provider: Some(provider), account: Some(account.into()),
             target: Some(ReplyTarget {
                 provider, account: account.into(), conversation: format!("fixture-thread-{id}"),
                 incoming: MessageId(id), recipients: vec![format!("{}@example.invalid", sender.to_lowercase())],

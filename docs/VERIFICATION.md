@@ -1,7 +1,6 @@
 # Prototype verification · 17 October 2026
 
-Scope: offline fictional messages and local mock sends only. No real accounts,
-provider requests, desktop configuration changes or user services were used.
+Scope: offline fictional messages, local mock sends, fake AI outputs and an isolated synthetic D-Bus notification stream. No real accounts, provider requests, owner desktop monitoring, desktop configuration changes or user services were used.
 
 ## Environment and dependencies
 
@@ -19,9 +18,9 @@ text controls. Real Kitty graphics and clipboard/file staging are pending.
 
 - `cargo fmt --check`: passed.
 - `cargo clippy --locked --all-targets -- -D warnings`: passed.
-- `cargo test --locked`: 42 tests passed.
+- `cargo test --locked`: 56 tests passed. One ignored child test is deliberately invoked by the private-bus wrapper, so it is also exercised without contacting the desktop.
 - `cargo build --release --locked`: passed; release `--help` and `doctor --json`
-  reported the offline command surface and pending capabilities correctly.
+  reported the explicit-setup command surface and pending capabilities correctly.
 - `python3 tests/terminal_smoke.py`: passed against the real debug executable in a
   Linux pseudo-terminal, using only temporary fixture profiles.
 - `cargo run --locked -- demo --snapshot`: rendered a mixed-source frame without
@@ -69,6 +68,18 @@ reader opening/scrolling/closing, resize, quit/reopen, failed and uncertain mock
 sends, retry blocking, explicit mock reconciliation, standalone fixture reader
 and terminal mode restoration on exit.
 
+## Feed policy, settings and provider contracts
+
+Source rendering tests verify distinct source colours, Discord RGB (88,101,242), selection tint and filled unread/hollow read dots. Seen state and dismissal persist across snapshots. Accepted replies dismiss the frozen original incoming target even when another row is selected; failures, uncertainty and stale acceptance do not. Dismissed messages can be included and restored without redirecting a draft.
+
+Read-state contract tests cover durable IMAP identity metadata, coalescing local flag changes, ignoring stale acknowledgements, protecting pending intent from incoming flag snapshots, failure retention and restart. This tests a fake transport and durable queue, **not** real iCloud/Graph read synchronisation. Older JSON snapshots lacking new fields and older flat TOML configs remain readable.
+
+Profile/account creation and multiline prompt editing work through shared settings and CLI, including file input, strict rejection of credential fields in TOML, local term fallback, independent global spam exclusions, dynamic setting readback and atomic rejection of invalid thresholds. The TUI masks synthetic credential input and cancels it without touching a draft. Actual keyring storage and Microsoft device login were not exercised; `secret-tool` is absent on the development machine.
+
+Decision tests use a fake transport for both Jev `noul` and OpenAI `predicate` request/response shapes, strict typed answers, global/per-account consent, prompt/model/policy cache fingerprints, stale-result rejection, pending-item release after failure/disconnection and draft preservation. HTTPS clients disable redirects and bound time/response size. No live provider latency, quality, API access or credential roundtrip has been verified.
+
+The notification protocol test starts **its own** `dbus-run-session`, sends fictional Notify method calls and verifies the real monitor sees only the configured app/title. Event identity includes bus ID, sender connection and serial. Domain tests cover duplicate suppression, arrival ordering, sanitised previews, read-only capability and local state reopening. Capture uses an additional shared user ownership lock across data directories; a CLI test proves the second process is rejected before bus access. No official Discord session was accessed. The notification bridge is not evidence of personal history/reply support.
+
 ## Desktop and later milestones still pending
 
 No actual Ghostty/Omarchy desktop was available for validation. Ghostty spawning
@@ -79,7 +90,6 @@ The PTY tests use F5 as the unambiguous mock-send shortcut.
 
 Daemon IPC, SQLite/outbox migration and recovery, shared reader snapshots,
 Wayland rich paste, attachment staging/upload, general HTML-to-terminal
-conversion, live providers, AI, desktop notifications/sounds/DND and the Omarchy
-companion plugin are not implemented. Acceptance scenarios for those capabilities
+conversion, mail/Teams message transports, remote unread sync, personal Discord history/replies, generated summaries, outgoing desktop notifications/sounds/DND and the Omarchy companion plugin are not implemented. Explicit account setup, typed decision adapters and opt-in read-only notification capture exist but still need owner-authorised live/desktop testing. Acceptance scenarios for those capabilities
 are not passed by the prototype. The fixture reader never takes a draft lease or
 changes the drawer's target, but it is not yet a shared-backend reader.

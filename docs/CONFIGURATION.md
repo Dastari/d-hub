@@ -2,13 +2,36 @@
 
 Use one typed settings registry to describe keys, types, defaults, validation, secrecy, help text and whether a setting needs a restart. The same registry powers the settings TUI, CLI, configuration validation and generated reference. The examples are proposed contracts, not implemented commands.
 
-## Implemented prototype subset
+## Implemented settings
 
-The offline prototype implements a strict flat TOML schema with `schema_version = 1`, `focus` (`all`, `work`, `personal`), `source` (`all`, `discord`, `teams`, `email`, `icloud`, `office365`; default `all`), `theme` (`midnight`, `dusk`), `reduced_motion` (default false), `insert_on_focus` (default true), `padding_horizontal` and `padding_vertical` (integers 0–16, both default 0). Source and focus filters intersect; Email combines iCloud and Office 365. Left/Right cycles sources in navigation mode while retaining cursor movement in insert mode. Existing profiles without `source` use All. Padding applies per side in terminal cells/rows around the complete application layout; internal composer and dialog spacing is separate. Existing profiles that omit padding use zero. If padding leaves less than 28×16 content space, the app shows its resize/reduce-padding fallback. The shared registry in `src/config.rs` powers both the settings TUI (navigation `,`) and `config list|get|set|reset|validate|export`. Use Left/Right to cycle values backwards/forwards in settings; Enter/Space advances. Unknown keys, invalid values and unsupported schema versions are rejected before atomic replacement. Configuration files use private permissions.
+The strict TOML schema remains `schema_version = 1`; older flat configs load with defaults for new fields. The shared `Settings` validation/persistence path powers `d-hub settings`, navigation `,`, and `config list|get|set|reset|validate|export`. Enter opens an editor, Ctrl+s saves, Escape cancels, and Left/Right cycles choices. CLI `config set KEY VALUE` accepts `--file PATH` instead of VALUE for multiline prompts or JSON collections. Unknown fields and invalid values fail atomically. Files are private. Close the running surface before CLI edits; cross-process settings coordination is pending.
 
-`demo` uses a temporary isolated profile by default; `demo --data-dir DIR` reopens a persistent demo profile. Its settings live at `DIR/config.toml`, unless global `--config PATH` is supplied. Configuration commands use `--config PATH` or the normal XDG config location. Close the demo before making CLI configuration edits; concurrent settings coordination is not implemented yet. `config list --json` reports each value's origin as config or default.
+| Keys | Default / behaviour |
+| --- | --- |
+| `focus` | `all`, or any configured profile ID; `personal` displays Home; `home` is an input alias unless a distinct home profile exists |
+| `source` | `all`; navigation cycles all, icloud, discord, teams, email, office365; Email combines both mail providers |
+| `theme`, `reduced_motion`, `insert_on_focus` | midnight, false, true |
+| `padding_horizontal`, `padding_vertical` | 0, range 0–16 per side; content below 28×16 uses a resize fallback |
+| `mark_read_on_select`, `dismiss_after_reply` | true; explicit selection/open marks read; accepted replies dismiss their original item |
+| `show_dismissed`, `show_spam` | false; navigation D and S include hidden items for inspection |
+| `profiles` | JSON list of `{id,name,prompt,terms,fixture_focus}`; Work and Home initially; maximum 32 |
+| `profiles.ID.name`, `.prompt`, `.terms` | Display name, independent decision prompt, newline-separated optional local include terms |
+| `spam.enabled`, `.prompt`, `.threshold`, `.local_terms` | true, independent promotion/spam question, 0.85, no local exclusion terms |
+| `ai.enabled`, `.provider`, `.model` | false, jev, jev-latest; changing provider selects its documented default model |
+| `ai.threshold`, `.timeout_ms`, `.hold_pending` | 0.6, 5000 (100–30000), false |
+| `accounts` | JSON account list, maximum 32, no secrets; `account add PROVIDER ID` or `:account add PROVIDER ID` creates metadata |
+| `accounts.ID.username`, `.tenant`, `.client_id`, `.resources` | Empty username, organizations, empty public-client app ID, newline-separated resource IDs |
+| `accounts.ID.allow_ai` | false; both this and global AI enablement are required |
+| `accounts.ID.discord_mode` | personal; personal history/replies unavailable; explicit notifications opts into the limited bridge; bot setup is separate and does not satisfy personal DMs |
+| `accounts.ID.notification_sender`, `.notification_app` | Empty sender, Discord; notification capture requires exact matching title/sender |
 
-The sections below describe the full future contract. The larger `examples/config.toml` and theme example are design fixtures and cannot be loaded by this smaller prototype schema. Profile/environment/value overrides, arbitrary theme files, account settings and the remaining command families are not implemented yet.
+`profile list|add ID|remove ID` also manages profiles. Remove an active profile to return to All. Profiles and global spam are independent questions; spam exclusion applies in All as well. Local terms work offline. Without a valid AI result, local terms or fixture tags provide fallback, otherwise unclassified messages remain accessible. `ai.hold_pending` optionally holds permitted live items until a result; errors release them to fallback. AI filtering never changes a locked draft.
+
+Credentials use `account auth ID` or `:auth ID`; `ai-auth` or `:auth ai` stores the selected AI key. Secret Service requires `secret-tool` and an unlocked keyring. CLI optionally reads secrets through `--secret-stdin`; never pass credentials as arguments. Microsoft uses delegated device login instead of password/stdin. `account forget ID` erases the credential, including after metadata removal. Bot credential storage does not imply an implemented bot transport. Personal Discord username/password, QR and user-token automation are not implemented.
+
+`demo` uses an isolated temporary profile or `demo --data-dir DIR`; its settings default to `DIR/config.toml`. Other commands use global `--config PATH` or XDG configuration. `notifications` uses `$XDG_STATE_HOME/d-hub/notifications` (normally `~/.local/state/d-hub/notifications`) or `--data-dir DIR`, separate from demo. Captured previews, local seen/dismissal state and pending read changes persist in private atomic JSON snapshots; SQLite/daemon migration remains future work. No provider currently acknowledges remote read changes.
+
+The sections below describe the broader future contract. `examples/config.toml` remains a design fixture and cannot be loaded as this implementation’s schema. Environment/profile overrides, arbitrary theme files, keyboard remapping and cross-process settings coordination remain pending. `config reset` uses built-in defaults; custom profile/account fields without a default should be edited or removed explicitly. `config list --json` reports origin at the containing TOML section level.
 
 ## Files and precedence
 
@@ -71,7 +94,7 @@ These include invariants with configurable behaviour around them: customization 
 
 ## Theme contract
 
-Themes contain metadata, semantic colours and styles plus border/icon choices. Tokens should cover background, surface, text, muted text, accent, selection, unread, urgent, warning, error, success, draft lock, attachment and source label. Avoid hardcoded provider brand colours. Each style can specify foreground/background and supported modifiers; every important status has a non-colour indication.
+Themes contain metadata, semantic colours and styles plus border/icon choices. Tokens should cover background, surface, text, muted text, accent, selection, unread, urgent, warning, error, success, draft lock, attachment and source label. Use distinct source colours, including Discord blurple, for dots and selected-message accents; keep success, error and other semantic colours consistent across providers. The current palettes bundle these source colours; configurable theme tokens remain future work. Each style can specify foreground/background and supported modifiers; every important status has a non-colour indication.
 
 Support RGB hex values, Unicode and conservative fallback borders, optional Nerd Font icons, density and reduced motion. Validate tokens and missing glyph fallbacks. Allow import/export and immediate preview without writing until Apply. Theme changes must not reset navigation or draft state.
 

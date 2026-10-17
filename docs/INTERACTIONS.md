@@ -91,9 +91,9 @@ INSERT · Ctrl+Enter Send
 
 At very narrow widths, wrap safely and prioritise recipient, body and attachment count. At wider widths, expand preview naturally. Minimum usable dimensions and fallback message must be measured in the prototype. No account/source tabs appear at any width.
 
-Prefer spacing and subtle surface colours to enclosing boxes. Message sources share semantic colours; use labels for source identity. Slow accent colour shifts and braille activity indicators provide motion without rearranging content. Reduced motion uses static colours and activity labels.
+Prefer spacing and subtle surface colours to enclosing boxes. Message sources share semantic success/error colours and have distinct source colours for dots and selection, including Discord blurple. Use labels for source identity as well. Slow accent colour shifts and braille activity indicators provide motion without rearranging content. Reduced motion uses static colours and activity labels.
 
-The header shows one active source filter, cycled with Left/Right in navigation mode: All, Discord, Teams, Email, iCloud and Office 365, wrapping in both directions. Email includes both mail providers. Source filters intersect with focus and search within the same feed. Filtering may change the previewed item, but cannot retarget an existing draft. A hidden empty target is cleared while focused; explicit message selection prepares a new reply. Inactive following uses the latest incoming item eligible under both source and focus. Empty combinations show a visible no-matches state.
+The header shows one active source filter, cycled with Left/Right in navigation mode: All, iCloud, Discord, Teams, Email and Office 365, wrapping in both directions. Email includes both mail providers. Source filters intersect with focus and search within the same feed. Filtering may change the previewed item, but cannot retarget an existing draft. A hidden empty target is cleared while focused; explicit message selection prepares a new reply. Inactive following uses the latest incoming item eligible under both source and focus. Empty combinations show a visible no-matches state.
 
 Outer padding is configurable per axis and defaults to zero. `padding_horizontal` applies equally to the left and right edges; `padding_vertical` applies equally to the top and bottom. Internal composer and dialog spacing remains separate. Layout and mouse hit regions use the same inset area; padding changes must preserve drafts and reply targets.
 
@@ -102,3 +102,13 @@ Outer padding is configurable per axis and defaults to zero. `padding_horizontal
 `d-hub preview <opaque-message-id>` connects to the same daemon and opens a reader directly when run inside a terminal. The drawer's open-preview action launches Ghostty with that command as an argv array. Reader IDs must not be arbitrary command text or filesystem paths.
 
 Reader provides sender/account/recipients, subject, complete body, quoted history, attachment list, local search and optional summary. Keep summary visibly distinct from original text. Full-preview functionality is an early milestone; advanced folder/channel navigation belongs to later full clients. Reuse a reader window where supported, with a safe new-window fallback. Closing it leaves the drawer and daemon running.
+
+## Read, dismiss and profile filtering
+
+Solid ● means unread; hollow ○ means read. Explicit selection/open marks read by default; `u` toggles it. Background preview/filter changes do not mark an item read. Remote-capable messages enqueue revision-checked read changes; pending local changes survive reconnect and ignore stale acknowledgements. Until real transports exist, report local state and queued intent honestly.
+
+`e` dismisses/restores the selected item; `D` includes dismissed messages. Accepted sends dismiss only the incoming item captured in the submitted target, independently of the selected row. Failed/uncertain operations retain the item. `d` retains its separate draft-discard confirmation. Dismissal and spam exclusion never release a draft lock. Include-hidden settings allow recovery without making those items eligible for automatic replies.
+
+`f` cycles All, Work, Home and custom profiles. Each profile has an editable independent decision prompt. A global spam/promotion policy applies before focus filtering, including in All; `S` includes matches for inspection. AI has no send or draft authority and requires global/per-account opt-in. Pending/failure fallback remains accessible.
+
+For the required personal Discord experience, new DMs join the shared feed in arrival order and open full conversation history with quick reply. The optional notification bridge currently provides only captured previews; `v` requests the official DM list, requiring manual conversation selection. There is no full history, conversation-specific handoff, in-app reply or remote read sync in that mode. Preserve this capability gap in the UI and plan.

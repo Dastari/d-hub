@@ -17,7 +17,7 @@ impl Provider {
             Self::ICloud => "iCloud",
             Self::Office365 => "Office 365",
             Self::Teams => "Teams",
-            Self::Discord => "Discord bot",
+            Self::Discord => "Discord",
         }
     }
 }
@@ -37,10 +37,10 @@ pub enum SourceFilter {
 impl SourceFilter {
     pub const ALL: [Self; 6] = [
         Self::All,
+        Self::ICloud,
         Self::Discord,
         Self::Teams,
         Self::Email,
-        Self::ICloud,
         Self::Office365,
     ];
 
@@ -154,11 +154,26 @@ pub struct Message {
     pub unread: bool,
     pub incoming: bool,
     pub target: Option<ReplyTarget>,
+    #[serde(default)]
+    pub remote: Option<crate::read_state::RemoteMessage>,
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 impl Message {
+    pub fn provider(&self) -> Option<Provider> {
+        self.provider
+            .or_else(|| self.target.as_ref().map(|t| t.provider))
+    }
+    pub fn account(&self) -> Option<&str> {
+        self.account
+            .as_deref()
+            .or_else(|| self.target.as_ref().map(|t| t.account.as_str()))
+    }
     pub fn matches_source(&self, source: SourceFilter) -> bool {
-        source.matches(self.target.as_ref().map(|target| target.provider))
+        source.matches(self.provider())
     }
 
     pub fn matches(&self, focus: Focus) -> bool {
