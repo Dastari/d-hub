@@ -203,20 +203,20 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
         Block::default().style(Style::default().bg(p.bg).fg(p.fg)),
         area,
     );
+    let area = area.inner(ratatui::layout::Margin {
+        horizontal: app.settings.padding_horizontal,
+        vertical: app.settings.padding_vertical,
+    });
     if area.width < 28 || area.height < 16 {
         frame.render_widget(
             text(
-                "d-hub · offline demo\nResize to at least 28 × 16.\nCtrl+q saves and quits.",
+                "d-hub · offline demo\nResize or reduce padding: content needs 28 × 16.\nCtrl+q saves and quits.",
                 p.fg,
             ),
-            padded(area),
+            area,
         );
         return HitAreas::default();
     }
-    let area = area.inner(ratatui::layout::Margin {
-        horizontal: 2,
-        vertical: 1,
-    });
     let composer_height = (area.height / 3).clamp(6, 11);
     let preview_height = if area.height >= 28 { 5 } else { 3 };
     let parts = Layout::vertical([
@@ -477,9 +477,11 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             let body = REGISTRY
                 .iter()
                 .enumerate()
+                .skip(app.setting_index.saturating_sub(1))
+                .take(3)
                 .map(|(i, setting)| {
                     format!(
-                        "{} {}   {}\n   {}\n",
+                        "{} {}  {}\n   {}\n",
                         if i == app.setting_index { "›" } else { " " },
                         setting.name,
                         app.settings.get(setting.key),
@@ -619,14 +621,22 @@ fn remove_last(app: &mut App) {
     }
 }
 
-fn launch_reader(app: &mut App) {
+fn launch_reader(app: &mut App, config_path: Option<&Path>) {
     let Some(message) = app.selected_message() else {
         return;
     };
     let result = std::env::current_exe().and_then(|binary| {
-        Command::new("ghostty")
-            .arg("-e")
-            .arg(binary)
+        let mut command = Command::new("ghostty");
+        command.arg("-e").arg(binary);
+        if let Some(path) = config_path {
+            let path = if path.is_absolute() {
+                path.to_owned()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            command.arg("--config").arg(path);
+        }
+        command
             .args(["preview", "--demo", &message.id.0.to_string()])
             .spawn()
     });
@@ -720,6 +730,7 @@ fn key(
     rows: usize,
     pending: &mut Option<(Instant, u64, MockOutcome)>,
     g_prefix: &mut Option<Instant>,
+    config_path: Option<&Path>,
 ) -> bool {
     if key.kind == KeyEventKind::Release {
         return false;
@@ -755,7 +766,7 @@ fn key(
             return false;
         }
         if control && key.code == KeyCode::Char('o') {
-            launch_reader(app);
+            launch_reader(app, config_path);
             return false;
         }
         if control && key.code == KeyCode::Char('a') {
@@ -840,7 +851,12 @@ fn key(
                     .iter()
                     .position(|v| *v == current)
                     .unwrap_or(0);
-                let value = setting.choices[(index + 1) % setting.choices.len()];
+                let offset = if key.code == KeyCode::Left {
+                    setting.choices.len() - 1
+                } else {
+                    1
+                };
+                let value = setting.choices[(index + offset) % setting.choices.len()];
                 if app.settings.set(setting.name, value).is_ok() {
                     if setting.name == "focus" {
                         app.set_focus(app.settings.focus);
@@ -994,6 +1010,7 @@ pub fn run(
                         (hits.feed.height / 3).max(1) as usize,
                         &mut pending,
                         &mut g_prefix,
+                        config_path,
                     );
                     if reader_only && mode == Mode::Reader && app.mode == Mode::Navigate {
                         quit = true;
@@ -1101,9 +1118,9 @@ pub fn snapshot(app: &mut App, width: u16, height: u16) -> Result<String> {
     Ok(output)
 }
 
-pub fn reader(id: crate::domain::MessageId) -> Result<()> {
+pub fn reader(id: crate::domain::MessageId, settings: Settings) -> Result<()> {
     let message = crate::fixtures::find(id).context("unknown demo message ID")?;
-    let mut app = App::new(crate::app::Session::default(), Settings::default())?;
+    let mut app = App::new(crate::app::Session::default(), settings)?;
     app.reader = Some(message);
     app.mode = Mode::Reader;
     run(app, None, None, true)

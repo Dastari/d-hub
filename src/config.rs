@@ -37,6 +37,8 @@ pub struct Settings {
     pub theme: Theme,
     pub reduced_motion: bool,
     pub insert_on_focus: bool,
+    pub padding_horizontal: u16,
+    pub padding_vertical: u16,
 }
 
 impl Default for Settings {
@@ -47,6 +49,8 @@ impl Default for Settings {
             theme: Theme::Midnight,
             reduced_motion: false,
             insert_on_focus: true,
+            padding_horizontal: 0,
+            padding_vertical: 0,
         }
     }
 }
@@ -57,6 +61,8 @@ pub enum Key {
     Theme,
     ReducedMotion,
     InsertOnFocus,
+    PaddingHorizontal,
+    PaddingVertical,
 }
 
 pub struct Setting {
@@ -65,6 +71,10 @@ pub struct Setting {
     pub help: &'static str,
     pub choices: &'static [&'static str],
 }
+
+const PADDING_CHOICES: &[&str] = &[
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+];
 
 pub const REGISTRY: &[Setting] = &[
     Setting {
@@ -91,6 +101,18 @@ pub const REGISTRY: &[Setting] = &[
         help: "Enter insert mode when an empty drawer gains focus",
         choices: &["true", "false"],
     },
+    Setting {
+        key: Key::PaddingHorizontal,
+        name: "padding_horizontal",
+        help: "Outer left/right padding in terminal cells",
+        choices: PADDING_CHOICES,
+    },
+    Setting {
+        key: Key::PaddingVertical,
+        name: "padding_vertical",
+        help: "Outer top/bottom padding in terminal rows",
+        choices: PADDING_CHOICES,
+    },
 ];
 
 impl Settings {
@@ -100,14 +122,29 @@ impl Settings {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(error) => return Err(error.into()),
         };
-        if value.schema_version != 1 {
-            bail!("unsupported configuration schema {}", value.schema_version);
-        }
+        value.validate()?;
         Ok(value)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.validate()?;
         write_private(path, toml::to_string_pretty(self)?.as_bytes())
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.schema_version != 1 {
+            bail!("unsupported configuration schema {}", self.schema_version);
+        }
+        for setting in REGISTRY {
+            if !setting.choices.contains(&self.get(setting.key).as_str()) {
+                bail!(
+                    "{} must be one of {}",
+                    setting.name,
+                    setting.choices.join(", ")
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn get(&self, key: Key) -> String {
@@ -116,6 +153,8 @@ impl Settings {
             Key::Theme => self.theme.label().into(),
             Key::ReducedMotion => self.reduced_motion.to_string(),
             Key::InsertOnFocus => self.insert_on_focus.to_string(),
+            Key::PaddingHorizontal => self.padding_horizontal.to_string(),
+            Key::PaddingVertical => self.padding_vertical.to_string(),
         }
     }
 
@@ -141,6 +180,8 @@ impl Settings {
             }
             Key::ReducedMotion => self.reduced_motion = value == "true",
             Key::InsertOnFocus => self.insert_on_focus = value == "true",
+            Key::PaddingHorizontal => self.padding_horizontal = value.parse()?,
+            Key::PaddingVertical => self.padding_vertical = value.parse()?,
         }
         Ok(())
     }

@@ -122,3 +122,46 @@ fn narrow_drawer_keeps_recipient_and_account_visible() {
     assert!(frame.contains("kai@example.invalid"));
     assert!(frame.contains("demo-personal"));
 }
+
+#[test]
+fn outer_padding_defaults_to_zero_and_can_be_changed_without_touching_a_draft() {
+    let mut app = App::new(Session::default(), Settings::default()).unwrap();
+    app.editor.insert("Keep my recipient and reply.");
+    app.update_body();
+    let draft = app.session.composer.draft.clone();
+    assert!(
+        tui::snapshot(&mut app, 66, 36)
+            .unwrap()
+            .starts_with("d-hub")
+    );
+    app.settings.set("padding_horizontal", "3").unwrap();
+    app.settings.set("padding_vertical", "2").unwrap();
+    let frame = tui::snapshot(&mut app, 66, 36).unwrap();
+    let lines: Vec<_> = frame.lines().collect();
+    assert!(lines[..2].iter().all(|s| s.is_empty()));
+    assert!(lines[2].starts_with("   d-hub"));
+    assert!(lines[34..].iter().all(|s| s.is_empty()));
+    assert!(
+        lines
+            .iter()
+            .filter(|s| !s.is_empty())
+            .all(|s| s.starts_with("   "))
+    );
+    assert_eq!(app.session.composer.draft, draft);
+    // Padding can consume the available space: show the fallback without losing the draft.
+    app.settings.padding_horizontal = 16;
+    app.settings.padding_vertical = 16;
+    for (width, height) in [(1, 1), (28, 16), (80, 40)] {
+        tui::snapshot(&mut app, width, height).unwrap();
+    }
+    assert_eq!(app.session.composer.draft, draft);
+}
+
+#[test]
+fn settings_keep_the_last_padding_control_visible_in_a_small_window() {
+    let mut app = App::new(Session::default(), Settings::default()).unwrap();
+    app.mode = Mode::Settings;
+    app.setting_index = d_hub::config::REGISTRY.len() - 1;
+    let frame = tui::snapshot(&mut app, 28, 20).unwrap();
+    assert!(frame.contains("padding_vertical"));
+}

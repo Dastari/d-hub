@@ -145,7 +145,13 @@ fn run(cli: Cli) -> Result<()> {
             if cli.json {
                 bail!("the reader is interactive; --json cannot start a TUI");
             }
-            tui::reader(MessageId(message_id))?;
+            let settings = cli
+                .config
+                .as_deref()
+                .map(Settings::load)
+                .transpose()?
+                .unwrap_or_default();
+            tui::reader(MessageId(message_id), settings)?;
         }
         Command::Config { action } => {
             let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;

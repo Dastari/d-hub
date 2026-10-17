@@ -19,7 +19,7 @@ text controls. Real Kitty graphics and clipboard/file staging are pending.
 
 - `cargo fmt --check`: passed.
 - `cargo clippy --locked --all-targets -- -D warnings`: passed.
-- `cargo test --locked`: 33 tests passed.
+- `cargo test --locked`: 36 tests passed.
 - `cargo build --release --locked`: passed; release `--help` and `doctor --json`
   reported the offline command surface and pending capabilities correctly.
 - `python3 tests/terminal_smoke.py`: passed against the real debug executable in a
@@ -50,6 +50,11 @@ profile, malformed-state rejection without overwriting, unsupported schema
 rejection and draft restoration after reopening. Settings tests exercise the
 shared TUI/CLI registry, valid round trips, atomic rejection of invalid edits,
 reset/export and config/default origin reporting. No SQLite migrations exist yet.
+
+Outer padding defaults to zero. Checks cover loading older profiles without the
+new fields, CLI round trips and rejection of invalid padding, rendering the
+configured inset on both axes, the small-content fallback, visibility of padding
+controls in settings, and preservation of a locked draft during layout changes.
 
 The PTY smoke test additionally drives actual keyboard routing: bracketed Unicode
 paste, fixture attachment, selecting another message, arrival and filter changes,

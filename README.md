@@ -41,7 +41,11 @@ Settings in a persistent demo profile use the same schema and validation as the 
 ```sh
 cargo run --locked -- --config ./demo-profile/config.toml config list --json
 cargo run --locked -- --config ./demo-profile/config.toml config set reduced_motion true
+cargo run --locked -- --config ./demo-profile/config.toml config set padding_horizontal 2
+cargo run --locked -- --config ./demo-profile/config.toml config set padding_vertical 1
 ```
+
+Outer padding defaults to zero on both axes; values 0–16 apply per side in terminal cells/rows. You can also change it in the settings TUI (Escape, then `,`). Separate fixture readers inherit the drawer's config, or accept an explicit `--config PATH`.
 
 Apply CLI changes while the demo is closed; concurrent settings coordination belongs to the daemon milestone. Without `--config`, configuration commands use the normal XDG config path. The demo defaults to its own isolated settings instead. [Configuration documentation](docs/CONFIGURATION.md) distinguishes the implemented subset from the planned full schema.
 

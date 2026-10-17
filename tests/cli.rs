@@ -114,3 +114,36 @@ fn export_reset_and_effective_origin_are_available_without_tui() {
     let exported: Settings = toml::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
     assert_eq!(exported, Settings::default());
 }
+
+#[test]
+fn padding_defaults_are_compatible_and_invalid_values_never_replace_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "schema_version = 1\ntheme = 'dusk'\n").unwrap();
+    let old = Settings::load(&path).unwrap();
+    assert_eq!((old.padding_horizontal, old.padding_vertical), (0, 0));
+    for (key, value) in [("padding_horizontal", "3"), ("padding_vertical", "2")] {
+        assert!(run(&path, &["config", "set", key, value]).status.success());
+    }
+    let saved = Settings::load(&path).unwrap();
+    assert_eq!((saved.padding_horizontal, saved.padding_vertical), (3, 2));
+    let original = std::fs::read(&path).unwrap();
+    for key in ["padding_horizontal", "padding_vertical"] {
+        for value in ["-1", "17", "65536", "1.5", "wide"] {
+            assert!(!run(&path, &["config", "set", key, value]).status.success());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+        assert!(run(&path, &["config", "reset", key]).status.success());
+        // Keep the next invalid-edit checks relative to the restored configuration.
+        std::fs::write(&path, &original).unwrap();
+    }
+    for content in [
+        "padding_horizontal = 17\n",
+        "padding_vertical = -1\n",
+        "padding_vertical = '2'\n",
+    ] {
+        std::fs::write(&path, content).unwrap();
+        assert!(!run(&path, &["config", "validate"]).status.success());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+    }
+}

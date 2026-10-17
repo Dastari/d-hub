@@ -92,6 +92,8 @@ At very narrow widths, wrap safely and prioritise recipient, body and attachment
 
 Prefer spacing and subtle surface colours to enclosing boxes. Message sources share semantic colours; use labels for source identity. Slow accent colour shifts and braille activity indicators provide motion without rearranging content. Reduced motion uses static colours and activity labels.
 
+Outer padding is configurable per axis and defaults to zero. `padding_horizontal` applies equally to the left and right edges; `padding_vertical` applies equally to the top and bottom. Internal composer and dialog spacing remains separate. Layout and mouse hit regions use the same inset area; padding changes must preserve drafts and reply targets.
+
 ## Full preview window
 
 `d-hub preview <opaque-message-id>` connects to the same daemon and opens a reader directly when run inside a terminal. The drawer's open-preview action launches Ghostty with that command as an argv array. Reader IDs must not be arbitrary command text or filesystem paths.
