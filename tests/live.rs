@@ -507,3 +507,226 @@ fn version_one_database_migrates_without_replacing_drafts_or_settings() {
     assert_eq!(expected.1.composer, actual.1.composer);
     assert_eq!(expected.2, actual.2);
 }
+
+#[test]
+fn discord_arrivals_edits_duplicates_deletions_and_replies_preserve_draft_and_arrival_order() {
+    let dir = directory();
+    let mut a = AccountConfig::new("discord-flow", Provider::Discord);
+    a.discord_user_id = "100000000000000001".into();
+    a.enabled = true;
+    a.allow_send = true;
+    let settings = Settings {
+        accounts: vec![a.clone()],
+        ..Settings::default()
+    };
+    let mut owner = Owner::open(Database::open_mode(dir.path(), &settings, true).unwrap())
+        .unwrap()
+        .with_transport(fake);
+    let make = |id: &str, body: &str| Item {
+        account_scope: providers::scope(&a),
+        remote: RemoteMessage::DiscordDm {
+            account: a.id.clone(),
+            channel: "100000000000000003".into(),
+            message: id.into(),
+        },
+        sender: "Fictional friend".into(),
+        recipients: vec!["100000000000000002".into()],
+        subject: "Direct message".into(),
+        body: body.into(),
+        timestamp: 0,
+        unread: None,
+        message_id: id.into(),
+        references: String::new(),
+        deleted: false,
+        partial: false,
+    };
+    let first = make("100000000000000004", "First incoming DM");
+    let second = make("100000000000000005", "Second incoming DM");
+    let enqueue = |items: Vec<Item>| {
+        scenarios()
+            .lock()
+            .unwrap()
+            .entry(a.id.clone())
+            .or_default()
+            .batches
+            .push_back(Batch {
+                items,
+                cursor: Value::Null,
+                status: "Fictional Discord connected".into(),
+            });
+    };
+    enqueue(vec![first.clone()]);
+    drive(&mut owner, |o| o.app.session.messages.len() == 1);
+    let id = owner.app.session.messages[0].id;
+    let arrived = owner.app.session.messages[0].timestamp;
+    assert!(arrived > 0);
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Select {
+                id,
+                prepare_reply: true,
+            }],
+        )
+        .unwrap();
+    compose(
+        &mut owner,
+        Event::Body("Keep this Discord recipient 東京".into()),
+    );
+    let draft = owner.app.session.composer.draft.clone();
+    assert!(
+        owner.app.session.read_changes.is_empty(),
+        "Discord seen markers are local"
+    );
+    let mut edit = first.clone();
+    edit.partial = true;
+    edit.body = "Edited incoming DM".into();
+    enqueue(vec![first.clone(), edit, second]);
+    owner.refresh();
+    drive(&mut owner, |o| {
+        o.app.session.messages.len() == 2
+            && o.app
+                .session
+                .messages
+                .iter()
+                .any(|m| m.body == "Edited incoming DM")
+    });
+    assert_eq!(owner.app.session.composer.draft, draft);
+    assert_eq!(
+        owner
+            .app
+            .session
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .timestamp,
+        arrived
+    );
+    assert_eq!(owner.app.visible()[0].body, "Second incoming DM");
+    assert!(
+        !owner
+            .app
+            .session
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .unread
+    );
+    let mut deletion = first.clone();
+    deletion.partial = true;
+    deletion.deleted = true;
+    enqueue(vec![deletion]);
+    owner.refresh();
+    drive(&mut owner, |o| {
+        o.app
+            .session
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .target
+            .is_none()
+    });
+    assert_eq!(owner.app.session.composer.draft, draft);
+    // A deleted original cannot become an automatic reply to a newer arrival.
+    assert!(
+        owner
+            .actions(
+                owner.revision,
+                &[Action::Compose {
+                    expected: owner.app.session.composer.clone(),
+                    event: Event::Submit,
+                    outcome: MockOutcome::Success,
+                }]
+            )
+            .is_err()
+    );
+    assert_eq!(owner.app.session.composer.draft, draft);
+    let revision = owner.revision;
+    enqueue(vec![first.clone()]);
+    owner.refresh();
+    drive(&mut owner, |o| o.revision > revision);
+    assert!(
+        owner
+            .app
+            .session
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .target
+            .is_none()
+    );
+    let second_id = owner
+        .app
+        .session
+        .messages
+        .iter()
+        .find(|m| m.id != id)
+        .unwrap()
+        .id;
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Park {
+                expected: owner.app.session.composer.clone(),
+            }],
+        )
+        .unwrap();
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Select {
+                id: second_id,
+                prepare_reply: true,
+            }],
+        )
+        .unwrap();
+    scenarios().lock().unwrap().get_mut(&a.id).unwrap().db =
+        Some(dir.path().join("service.sqlite3"));
+    compose(
+        &mut owner,
+        Event::Body("Reply only to the second DM".into()),
+    );
+    compose(&mut owner, Event::Submit);
+    drive(&mut owner, |o| {
+        !matches!(o.app.session.composer.send, SendState::Submitting(_))
+    });
+    assert!(owner.app.session.message_state[&second_id].dismissed);
+    assert!(!owner.app.session.message_state[&id].dismissed);
+    assert!(
+        owner
+            .app
+            .session
+            .saved
+            .values()
+            .any(|saved| Some(saved) == draft.as_ref())
+    );
+    let mut changed = a.clone();
+    changed.discord_user_id = "100000000000000009".into();
+    assert_ne!(providers::scope(&a), providers::scope(&changed));
+    let mut mail = account("legacy-scope");
+    mail.provider = Provider::ICloud;
+    use sha2::{Digest, Sha256};
+    let legacy = format!(
+        "{}:{:x}",
+        mail.id,
+        Sha256::digest(
+            serde_json::to_vec(&(
+                mail.provider,
+                &mail.username,
+                &mail.tenant,
+                &mail.client_id,
+                &mail.resources
+            ))
+            .unwrap()
+        )
+    );
+    assert_eq!(
+        providers::scope(&mail),
+        legacy,
+        "existing mail cursor/cache identity must not change"
+    );
+}

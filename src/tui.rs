@@ -35,7 +35,7 @@ use std::{
 };
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  update · motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nPersonal Discord replies, images and the Omarchy plugin remain pending.";
+const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  account enable|disable ID\n  auth ACCOUNT|ai · spam prompt\n  update · motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nDiscord history/remote read sync, images and the Omarchy plugin remain pending.";
 
 struct TerminalGuard;
 
@@ -922,7 +922,10 @@ fn poll_discord_setup(app: &mut App) -> bool {
     {
         account.discord_user_id = user.id;
         account.username = user.username;
-        app.notice = "Discord signed in · DM transport is not connected yet.".into();
+        app.notice = format!(
+            "Discord signed in · :account enable {} starts DM sync; allow_send controls replies.",
+            account.id
+        );
     }
     changed
 }
@@ -1060,7 +1063,7 @@ fn draw_discord_qr(frame: &mut Frame, area: Rect, p: Palette, setup: &crate::dis
     let footer = match setup.phase {
         Phase::Review => "Enter save this identity · Esc cancel",
         Phase::Saving => "Saving to keyring · no plaintext fallback",
-        Phase::Saved => "Enter / Esc close · DM sync/replies pending",
+        Phase::Saved => "Enter / Esc close · enable account to sync DMs",
         Phase::Failed | Phase::Cancelled => "r retry · Esc close",
         _ => "Esc cancel · only scan codes you requested here",
     };
@@ -1261,9 +1264,12 @@ fn run_command(app: &mut App, command: &str) -> bool {
         }
         ["connections"] => {
             app.notice = app
-                .provider_status
+                .settings.accounts
                 .iter()
-                .map(|(id, s)| format!("{id}: {s}"))
+                .map(|account| {
+                    let status = if !account.enabled { "disabled · :account enable ID starts sync" } else { app.provider_status.get(&account.id).map(String::as_str).unwrap_or("waiting for provider") };
+                    format!("{}: {status}", account.id)
+                })
                 .collect::<Vec<_>>()
                 .join(" · ")
         }
@@ -1290,7 +1296,13 @@ fn run_command(app: &mut App, command: &str) -> bool {
                 Err(e) => app.notice = e.to_string(),
             }
         }
-        ["account", ..] => app.notice = "Usage: :account add discord|icloud|office365|teams ID (example: :account add discord personal)".into(),
+        ["account", action @ ("enable" | "disable"), id] => {
+            match app.settings.set(&format!("accounts.{id}.enabled"), if *action == "enable" { "true" } else { "false" }) {
+                Ok(()) => app.notice = format!("Account {id} {action}d · :connections shows sync status; allow_send controls replies."),
+                Err(e) => app.notice = e.to_string(),
+            }
+        }
+        ["account", ..] => app.notice = "Usage: :account add discord|icloud|office365|teams ID; :account enable ID; :account disable ID".into(),
         ["auth", id] => begin_auth(app, id),
         ["dismiss"] => app.toggle_dismissed(),
         ["dismissed"] => app.toggle_show_dismissed(),

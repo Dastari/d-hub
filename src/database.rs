@@ -159,7 +159,11 @@ impl Database {
     ) -> Result<crate::domain::MessageId> {
         let key = serde_json::to_string(&(&record.remote, &record.account_scope))?;
         let mut record = record.clone();
-        if record.partial {
+        let discord = matches!(
+            record.remote,
+            crate::read_state::RemoteMessage::DiscordDm { .. }
+        );
+        if record.partial || discord {
             let previous: Option<String> = self
                 .connection
                 .query_row(
@@ -170,8 +174,20 @@ impl Database {
                 .optional()?;
             if let Some(previous) = previous {
                 let mut old: crate::providers::Item = serde_json::from_str(&previous)?;
-                old.unread = record.unread.or(old.unread);
-                record = old;
+                if record.partial {
+                    old.unread = record.unread.or(old.unread);
+                    if discord {
+                        // Edits/deletions update captured content, preserving arrival time, read state and frozen recipients.
+                        old.deleted |= record.deleted;
+                        if !record.deleted {
+                            old.body = record.body.clone();
+                        }
+                    }
+                    record = old;
+                } else if old.deleted {
+                    // A replayed create cannot resurrect a deleted Discord message.
+                    record = old;
+                }
             }
         }
         self.connection.execute("INSERT INTO remote_messages(identity,payload) VALUES (?1,?2) ON CONFLICT(identity) DO UPDATE SET payload=excluded.payload",

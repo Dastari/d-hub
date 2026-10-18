@@ -167,7 +167,7 @@ impl AccountConfig {
                 "Official Discord desktop notifications, filtered by sender; no Discord credentials, remote unread or in-app replies"
             }
             Provider::Discord if self.discord_mode == "personal" => {
-                "Personal Discord QR sign-in · unofficial client · DM sync/replies pending"
+                "Personal Discord QR sign-in · unofficial client · enable for new DMs; allow_send enables text replies; read dots local"
             }
             Provider::Discord => {
                 "Discord bot token · authorised bot resources only; does not satisfy personal DM requirements"

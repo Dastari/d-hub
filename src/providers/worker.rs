@@ -87,6 +87,12 @@ impl Workers {
                 worker.inflight = None;
                 worker.busy = false;
                 let delay = match &result.outcome {
+                    Outcome::Sync(Ok(_))
+                        if worker.account.provider == Provider::Discord
+                            && worker.account.discord_mode == "personal" =>
+                    {
+                        1
+                    }
                     Outcome::Sync(Err(e)) | Outcome::Read(_, Err(e)) => e
                         .downcast_ref::<graph::Throttled>()
                         .map(|e| e.0)
@@ -245,6 +251,7 @@ pub fn remote_account(remote: &RemoteMessage) -> &str {
     match remote {
         RemoteMessage::Imap { account, .. }
         | RemoteMessage::Graph { account, .. }
+        | RemoteMessage::DiscordDm { account, .. }
         | RemoteMessage::GraphChat { account, .. } => account,
     }
 }

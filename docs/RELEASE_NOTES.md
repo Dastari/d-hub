@@ -1,17 +1,11 @@
-Fix account setup commands and completion.
+Initial personal Discord DM transport.
 
-- Complete account/provider commands, existing account IDs for authentication, and custom profile IDs with Tab/Shift+Tab.
-- Accept a full pasted :account add command in settings or command entry; wait for Enter before running it.
-- Keep settings visible, return there on cancellation, and select a newly added account with a sign-in hint.
-- Scroll long commands in narrow windows and show command errors in settings.
-- Preserve reply drafts and treat ordinary composer text as text. From the feed, press Escape then : to enter a command.
+- Receive new personal/group DMs into the shared feed in arrival order using the QR credential already in your keyring.
+- Use :account enable ACCOUNT to start reception, :connections to check status, and :account disable ACCOUNT to stop. Updates never enable connections/sends automatically.
+- Text replies use the immutable target and durable outbox; enable accounts.ACCOUNT.allow_send separately. No automatic retry of uncertain sends.
+- Maintain heartbeat/reconnect/resume in the background, deduplicate replays, and preserve drafts/read state through edits/deletions.
+- Recheck private/group recipients before replies and reject account identity mismatches.
 
-Update using :update in a managed installation, or run:
+Use :update in a managed installation. After updating an existing sign-in, enable the account and wait for Discord DMs connected, then ask for a new test message. DMs sent to the old build are not backfilled.
 
-```sh
-curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh
-```
-
-For an existing development executable/symlink, add `-s -- --replace` after `sh` to retain a private launcher backup. Pre-v0.2.1 development services need a one-time save/close and `d-hub service stop` before managed launch.
-
-Personal Discord QR setup is available; DM synchronization/replies/history, attachment transfers and the Omarchy companion remain unfinished. Actual provider/desktop acceptance remains an owner setup step. No license has been selected.
+Read dots remain local. History, catch-up after a full stop/expired session, attachment transfers, desktop alerts and the Omarchy companion remain unfinished. Fake-server tests cover the protocol; actual Discord delivery/reply acceptance remains an owner setup check. This is the owner-selected unofficial personal-client route, not a supported bot integration. No license has been selected.

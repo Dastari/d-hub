@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RemoteMessage {
+    DiscordDm {
+        account: String,
+        channel: String,
+        message: String,
+    },
     GraphChat {
         account: String,
         chat: String,

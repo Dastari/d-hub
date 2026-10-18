@@ -53,7 +53,9 @@ def main():
             assert database.stat().st_mode & 0o077 == 0
 
             # Create account metadata through the first-launch TUI, without authentication.
+            terminal.output.clear()
             terminal.resize(32, 52)
+            terminal.wait(lambda: b"\x1b[52;" in terminal.output, "tall narrow settings resize")
             terminal.send(":account add dis\tpersonal\r")
             terminal.wait(lambda: any(a["id"] == "personal" for a in snapshot()["settings"]["accounts"]), "account setup metadata")
             assert snapshot()["settings"]["accounts"][0]["enabled"] is False
@@ -69,10 +71,14 @@ def main():
             terminal.wait(lambda: len(snapshot()["settings"]["accounts"]) == 4, "typed Microsoft account")
             assert all(not a["enabled"] and not a["allow_send"] for a in snapshot()["settings"]["accounts"])
             terminal.screen_action(b":account add discord cancelled", b"Command")
-            terminal.send(b"\x1b")  # Return to settings, retaining the existing four accounts.
-            for _ in range(4):
-                terminal.pump()
+            terminal.screen_action(b"\x1b", b"PgUp/PgDn")  # Wait for settings before sending another command.
             assert len(snapshot()["settings"]["accounts"]) == 4
+            # Enabling an unsigned account must report missing QR setup without looking up a secret or connecting.
+            terminal.send(":account enable per\t\r")
+            terminal.wait(lambda: snapshot()["settings"]["accounts"][0]["enabled"], "enable account completion")
+            terminal.wait(lambda: "QR sign-in" in snapshot()["provider_status"].get("personal", ""), "honest unsigned Discord status")
+            terminal.send(":account disable personal\r")
+            terminal.wait(lambda: not snapshot()["settings"]["accounts"][0]["enabled"], "disable account")
             terminal.close()
             terminal = None
             assert snapshot()["session"]["messages"] == []  # service survives the drawer

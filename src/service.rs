@@ -469,15 +469,36 @@ impl Owner {
         staged.feed_offset = self.app.feed_offset;
         staged.provider_status = self.app.provider_status.clone();
         let anchor = self.app.visible().get(self.app.feed_offset).map(|m| m.id);
-        for item in batch.items {
+        for mut item in batch.items {
             if item.account_scope != crate::providers::scope(account) {
                 bail!("Provider returned a mismatched account identity");
             }
-            let known = if let Some(id) = self.database.remote_id(&item)? {
+            let existing = self.database.remote_id(&item)?;
+            let known = if let Some(id) = existing {
                 self.database.imported(id)?
             } else {
                 false
             };
+            if account.provider == crate::domain::Provider::Discord && !item.partial {
+                item.timestamp = if let Some(time) = existing
+                    .map(|id| self.database.remote(id))
+                    .transpose()?
+                    .map(|item| item.timestamp)
+                    .filter(|time| *time > 0)
+                {
+                    time
+                } else {
+                    crate::discord_notifications::now().max(
+                        staged
+                            .session
+                            .messages
+                            .iter()
+                            .map(|m| m.timestamp)
+                            .max()
+                            .unwrap_or(0),
+                    )
+                };
+            }
             let id = self.database.store_remote(&item)?;
             let item = self.database.remote(id)?;
             if item.deleted {
@@ -628,6 +649,18 @@ impl Owner {
                 Outcome::Sync(sync_result) if current => {
                     match sync_result {
                         Ok(batch) => {
+                            if batch.items.is_empty()
+                                && self
+                                    .app
+                                    .session
+                                    .sync_cursors
+                                    .get(&crate::providers::scope(&result.account))
+                                    == Some(&batch.cursor)
+                                && self.app.provider_status.get(&result.account.id)
+                                    == Some(&batch.status)
+                            {
+                                continue;
+                            }
                             self.ingest(&result.account, batch)?;
                         }
                         Err(error) => {
@@ -678,12 +711,22 @@ impl Owner {
                     return Ok(());
                 }
                 match self.database.remote(op.draft.target.incoming) {
-                    Ok(item) => Some((item, op.clone())),
-                    Err(_) => {
+                    Ok(item)
+                        if self.app.settings.accounts.iter().any(|a| {
+                            a.id == op.draft.target.account
+                                && a.provider == op.draft.target.provider
+                                && item.account_scope == crate::providers::scope(a)
+                                && item.message(op.draft.target.incoming, a).target.as_ref()
+                                    == Some(&op.draft.target)
+                        }) =>
+                    {
+                        Some((item, op.clone()))
+                    }
+                    _ => {
                         let operation = op.operation;
                         self.app.session.composer.apply(Event::Failed(
                             operation,
-                            "Original message unavailable".into(),
+                            "Original message unavailable or reply identity changed".into(),
                         ));
                         self.revision = self.database.commit(
                             self.revision,

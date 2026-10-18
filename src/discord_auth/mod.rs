@@ -373,7 +373,10 @@ impl Setup {
                 self.user = Some(user.clone());
                 self.matrix = None;
                 self.expires = None;
-                self.status="Signed in · session stored in keyring. DM sync/replies are the next integration step.".into();
+                self.status = format!(
+                    "Signed in · session saved. :account enable {} starts DM sync; allow_send controls replies.",
+                    self.account
+                );
                 return Some(user);
             }
             Event::Cancelled => {

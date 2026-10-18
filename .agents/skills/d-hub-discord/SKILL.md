@@ -9,7 +9,7 @@ Read the Discord scope in [integration design](../../../docs/INTEGRATIONS.md). T
 
 ## Owner-selected personal client route
 
-On 18 October 2026 the owner explicitly requested personal-account setup with QR sign-in like Concord. This supersedes the earlier project restriction against implementing personal login. Continue the independent personal client implementation without asking the same scope question again. Authentication is implemented; DM sync/replies are still pending.
+On 18 October 2026 the owner explicitly requested personal-account setup with QR sign-in like Concord. This supersedes the earlier project restriction against implementing personal login. Continue the independent personal client implementation without asking the same scope question again. Authentication and initial personal/group DM reception/text replies are implemented. Actual owner live acceptance, remote read synchronization, offline catch-up and history remain pending. Preserve explicit enabled/allow_send controls; QR sign-in and updates must not silently enable connections or sends.
 
 Discord's [self-bot policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots) does not make this an officially supported integration; record its unofficial status honestly. Do not silently substitute bots or desktop notifications for personal DMs.
 

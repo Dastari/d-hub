@@ -1,8 +1,8 @@
 # d-hub
 
-d-hub is a keyboard-first communications drawer for dastari, built for Arch Linux, Omarchy and Ghostty. It is designed to bring unread iCloud mail, Office 365 mail, Teams and personal Discord DMs into one chronological feed with a persistent, context-aware reply composer. Personal QR sign-in is implemented; DM synchronization, replies and history remain unfinished. Bot channels do not meet the owner’s needs.
+d-hub is a keyboard-first communications drawer for dastari, built for Arch Linux, Omarchy and Ghostty. It is designed to bring unread iCloud mail, Office 365 mail, Teams and personal Discord DMs into one chronological feed with a persistent, context-aware reply composer. Personal QR sign-in, new DM reception and text replies are implemented; live owner acceptance, history and remote read synchronization remain pending. Bot channels do not meet the owner’s needs.
 
-Personal Discord [QR sign-in setup](docs/DISCORD_SETUP.md) is available; DM syncing/replies are still the next step.
+Personal Discord [setup](docs/DISCORD_SETUP.md) separates QR sign-in, enabling reception and allowing replies. Existing signed-in accounts need `:account enable ACCOUNT` to start receiving new DMs.
 
 The interface uses open spacing, minimal borders and a consistent colour language across sources, with a slow accent shift and braille activity indicators. It aims for a modern AI-harness feel: Unicode, RGB themes, image previews, attachment chips, a command palette, discoverable shortcuts and a multiline input. Focus profiles filter the shared feed without source tabs. Reduced motion is available.
 
@@ -26,9 +26,9 @@ Then run `d-hub` in your terminal. Linux x86_64 and aarch64 production builds in
 
 ## Project status
 
-The shared SQLite service now supports opt-in **real iCloud mail, Microsoft mail and selected Teams chats**, with persistent drafts, background sync/replies, remote mail read updates and optional daemon-owned Jev/OpenAI filtering. Live profiles start empty; demo data stays isolated. Sending and account connections default off. Provider tests use local fake servers; owner account and actual desktop acceptance remain pending. Personal Discord replies, attachments and the Omarchy companion are unfinished.
+The shared SQLite service now supports opt-in **real iCloud mail, Microsoft mail, selected Teams chats and personal Discord DMs**, with persistent drafts, background sync/replies, remote mail read updates and optional daemon-owned Jev/OpenAI filtering. Live profiles start empty; demo data stays isolated. Sending and account connections default off. Provider tests use local fake servers; owner account and actual desktop acceptance remain pending. Discord history/offline catch-up, remote read markers, attachments and the Omarchy companion are unfinished.
 
-Start with the [real-account setup guide](docs/LIVE_SETUP.md). It covers authentication, a separate live profile, read sync, safe first replies, send recovery and current limits. Running `d-hub` starts the live service if missing and opens the drawer; empty profiles open account setup. `d-hub demo` remains explicitly offline. [Personal Discord QR setup](docs/DISCORD_SETUP.md) is now implemented; personal DM sync/replies remain pending.
+Start with the [real-account setup guide](docs/LIVE_SETUP.md). It covers authentication, a separate live profile, read sync, safe first replies, send recovery and current limits. Running `d-hub` starts the live service if missing and opens the drawer; empty profiles open account setup. `d-hub demo` remains explicitly offline. [Personal Discord QR setup](docs/DISCORD_SETUP.md) is now implemented; new DM reception/text replies require account enablement; history and remote read markers remain pending.
 
 The first Discord delivery needs new personal DMs in the shared arrival-ordered feed and quick replies. Historical context is deferred to phase 2: opening a chat loads recent context, with older pages fetched on demand. A broader client follows in phase 3. History is not an initial-release gate. Discord’s supported bot API cannot supply this personal inbox. The optional notification bridge does **not** satisfy that requirement: it has no history, replies, remote read state or reliable conversation deep link. It remains disabled unless explicitly configured. See [integration limits](docs/INTEGRATIONS.md#discord).
 

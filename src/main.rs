@@ -13,7 +13,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     version,
     about = "A communications drawer · live iCloud, Microsoft mail and Teams",
-    long_about = "d-hub: one communications feed with persistent replies. Demo is entirely offline; daemon --live connects explicitly enabled accounts. Personal Discord replies remain unavailable."
+    long_about = "d-hub: one communications feed with persistent replies. Demo is entirely offline; daemon --live connects explicitly enabled accounts. Personal Discord supports opt-in new DMs and text replies; history and remote read sync remain pending."
 )]
 struct Cli {
     #[arg(
@@ -573,7 +573,7 @@ fn run(cli: Cli) -> Result<()> {
                             account.username = user.username;
                             persist_settings(&settings, &path, &mut service)?;
                             eprintln!(
-                                "Discord session stored in keyring. Personal DM sync/replies are not connected yet."
+                                "Discord session stored in keyring. Enable accounts.ID.enabled to receive DMs; allow_send controls replies."
                             );
                         }
                         return Ok(());

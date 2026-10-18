@@ -1,4 +1,5 @@
 //! Provider boundary: credentials/network live only in daemon-owned workers.
+pub mod discord;
 pub mod graph;
 pub mod icloud;
 pub mod worker;
@@ -37,6 +38,7 @@ impl Item {
             account: account.id.clone(),
             conversation: match &self.remote {
                 RemoteMessage::GraphChat { chat, .. } => chat.clone(),
+                RemoteMessage::DiscordDm { channel, .. } => channel.clone(),
                 _ => serde_json::to_string(&self.remote).expect("remote serializes"),
             },
             incoming: id,
@@ -57,7 +59,10 @@ impl Item {
             unread: self.unread.unwrap_or(true),
             incoming: true,
             target,
-            remote: if matches!(self.remote, RemoteMessage::GraphChat { .. }) {
+            remote: if matches!(
+                self.remote,
+                RemoteMessage::GraphChat { .. } | RemoteMessage::DiscordDm { .. }
+            ) {
                 None
             } else {
                 Some(self.remote.clone())
@@ -95,21 +100,22 @@ pub fn timestamp(value: &str) -> u64 {
 }
 pub fn scope(account: &AccountConfig) -> String {
     use sha2::{Digest, Sha256};
+    let identity = (
+        account.provider,
+        &account.username,
+        &account.tenant,
+        &account.client_id,
+        &account.resources,
+    );
+    let bytes = if account.provider == Provider::Discord {
+        serde_json::to_vec(&(identity, &account.discord_mode, &account.discord_user_id))
+    } else {
+        // Preserve the existing mail/Teams key: changing it would reimport their inboxes.
+        serde_json::to_vec(&identity)
+    }
+    .expect("account serializes");
     // Never reuse cursors when account identity/resources change.
-    format!(
-        "{}:{:x}",
-        account.id,
-        Sha256::digest(
-            serde_json::to_vec(&(
-                account.provider,
-                &account.username,
-                &account.tenant,
-                &account.client_id,
-                &account.resources
-            ))
-            .expect("account serializes")
-        )
-    )
+    format!("{}:{:x}", account.id, Sha256::digest(bytes))
 }
 #[derive(Debug, Clone)]
 pub struct Batch {
@@ -136,11 +142,13 @@ pub trait Transport: Send {
 }
 pub struct Network {
     pub graph: graph::Graph,
+    pub discord: discord::Discord,
 }
 impl Network {
     pub fn new() -> Result<Self> {
         Ok(Self {
             graph: graph::Graph::new()?,
+            discord: discord::Discord::new()?,
         })
     }
 }
@@ -153,9 +161,7 @@ impl Transport for Network {
                 cursor,
             ),
             Provider::Office365 | Provider::Teams => self.graph.sync(account, cursor),
-            Provider::Discord => bail!(
-                "Personal Discord transport remains unavailable; bot channels are not a substitute"
-            ),
+            Provider::Discord => self.discord.sync(account, cursor),
         }
     }
     fn unread(
@@ -209,7 +215,7 @@ impl Transport for Network {
                 Err(_) => SendResult::Failed("Credential missing or keyring locked".into()),
             },
             Provider::Office365 | Provider::Teams => self.graph.send(account, item, submission),
-            _ => SendResult::Failed("Provider does not support live replies".into()),
+            Provider::Discord => self.discord.send(account, item, submission),
         }
     }
 }

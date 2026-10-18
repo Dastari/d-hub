@@ -66,6 +66,8 @@ fn candidates(app: &App) -> Vec<String> {
     .collect();
     for account in &app.settings.accounts {
         result.push(format!("auth {}", account.id));
+        result.push(format!("account enable {}", account.id));
+        result.push(format!("account disable {}", account.id));
     }
     for profile in &app.settings.profiles {
         for action in ["focus", "profile prompt", "profile remove"] {
@@ -129,7 +131,7 @@ pub(super) fn paste(app: &mut App, value: &str) {
 
 fn hint(value: &str) -> &'static str {
     if input(value).starts_with("account") {
-        "account add discord|icloud|office365|teams ID · choose your own account ID, e.g. personal"
+        "account add PROVIDER ID · account enable ID / disable ID · auth ID signs in"
     } else if input(value).starts_with("auth") {
         "auth ACCOUNT · use an existing account ID; auth ai configures the decision provider"
     } else if input(value).starts_with("profile") {
@@ -217,7 +219,7 @@ mod tests {
         app.settings.add_profile("family").unwrap();
         app.mode = Mode::Settings;
         open(&mut app);
-        app.command = Editor::new("account");
+        app.command = Editor::new("account add");
         for provider in ["discord", "icloud", "office365", "teams", "discord"] {
             press(&mut app, KeyCode::Tab);
             assert_eq!(app.command.text, format!("account add {provider} "));
