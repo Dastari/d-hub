@@ -70,3 +70,7 @@ Public repository creation and pushing to the owner's personal `dastari/d-hub` G
 ## Existing launcher migration · v0.2.3
 
 The owner encountered the installer's existing ~/.local/bin/d-hub guard while moving from a development installation. The installer now supports explicit --replace after release validation, with unique private launcher backups, atomic symlink replacement and preservation of relative/dangling link targets. The default refusal includes the complete migration command. No owner launcher was visible in this development environment, so do not claim it was migrated directly. See README.md and docs/UPDATES.md. v0.2.3 is published; both native release jobs passed, and the public installer successfully migrated an existing launcher with a verified private backup in a temporary HOME.
+
+## Responsive settings · v0.2.4
+
+The owner reported a tall settings drawer displaying only three entries and indistinguishable field/value/help text. The new src/tui/settings.rs renderer uses the available height with variable wrapped row heights, grouped accent headings, secondary-colour values, muted notes and a continuous selection surface. Wide name/value columns and narrow stacked rows share Unicode-safe wrapping. Page/Home/End and mouse scrolling/clicking preserve the composer. Viewport state is local, not persistent config. Local Rust/PTY/installer checks pass; publish v0.2.4 after native release CI. See docs/VERIFICATION.md.

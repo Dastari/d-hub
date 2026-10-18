@@ -1,3 +1,5 @@
+mod settings;
+
 use crate::{
     app::{App, MockOutcome, Mode},
     composer::{Event as ComposerEvent, SendState},
@@ -186,6 +188,7 @@ struct HitAreas {
     feed: Rect,
     composer: Rect,
     attachments: Vec<(Rect, usize)>,
+    settings: Vec<(Rect, usize)>,
 }
 
 fn padded(rect: Rect) -> Rect {
@@ -264,6 +267,9 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             area,
         );
         return HitAreas::default();
+    }
+    if app.mode == Mode::Settings {
+        return settings::draw(frame, area, p, app);
     }
     let composer_height = (area.height / 3).clamp(6, 11);
     let preview_height = if area.height >= 28 { 5 } else { 3 };
@@ -611,46 +617,6 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             HELP,
             app.reader_scroll,
         ),
-        Mode::Settings => {
-            let rows = app.settings.entries();
-            let body = rows
-                .iter()
-                .enumerate()
-                .skip(app.setting_index.saturating_sub(1))
-                .take(3)
-                .map(|(i, setting)| {
-                    format!(
-                        "{} {}  {}\n   {}\n",
-                        if i == app.setting_index { "›" } else { " " },
-                        setting.name,
-                        safe_text(&setting.value).lines().next().unwrap_or(""),
-                        safe_text(&setting.help)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let first_setup =
-                app.settings.accounts.is_empty() && (app.live_service || app.live_setup);
-            let body = if first_setup {
-                format!(
-                    "Press : then account add discord personal\nThen :auth personal for QR sign-in.\niCloud, Office365 and Teams are also available.\n\n{body}"
-                )
-            } else {
-                body
-            };
-            overlay(
-                frame,
-                area,
-                p,
-                if first_setup {
-                    "Set up accounts · : commands"
-                } else {
-                    "Settings · Enter edit · arrows cycle · j/k select"
-                },
-                &body,
-                0,
-            );
-        }
         Mode::Discard => overlay(
             frame,
             area,
@@ -1561,6 +1527,15 @@ fn key(
                 KeyCode::Up | KeyCode::Char('k') => {
                     app.setting_index = (app.setting_index + rows.len() - 1) % rows.len()
                 }
+                KeyCode::PageDown => {
+                    app.setting_index =
+                        (app.setting_index + app.settings_page_size).min(rows.len() - 1)
+                }
+                KeyCode::PageUp => {
+                    app.setting_index = app.setting_index.saturating_sub(app.settings_page_size)
+                }
+                KeyCode::Home => app.setting_index = 0,
+                KeyCode::End => app.setting_index = rows.len() - 1,
                 KeyCode::Enter => edit_setting(app, &rows[app.setting_index].name),
                 KeyCode::Char(' ') | KeyCode::Right | KeyCode::Left => {
                     let row = &rows[app.setting_index];
@@ -1878,6 +1853,23 @@ fn run_inner(
                     let point = ratatui::layout::Position::new(mouse.column, mouse.row);
                     match mouse.kind {
                         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                            if app.mode == Mode::Settings =>
+                        {
+                            let last = app.settings.entries().len().saturating_sub(1);
+                            app.setting_index = if mouse.kind == MouseEventKind::ScrollDown {
+                                (app.setting_index + 3).min(last)
+                            } else {
+                                app.setting_index.saturating_sub(3)
+                            };
+                        }
+                        MouseEventKind::Down(MouseButton::Left) if app.mode == Mode::Settings => {
+                            if let Some((_, index)) =
+                                hits.settings.iter().find(|(area, _)| area.contains(point))
+                            {
+                                app.setting_index = *index;
+                            }
+                        }
+                        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
                             if matches!(app.mode, Mode::Reader | Mode::Help) =>
                         {
                             scroll(&mut app, mouse.kind == MouseEventKind::ScrollDown, 3)
@@ -2013,6 +2005,41 @@ pub fn reader(id: crate::domain::MessageId, settings: Settings) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{app::Session, domain::SourceFilter};
+
+    #[test]
+    fn settings_page_keys_follow_visible_rows_and_keep_reply_context() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.editor.insert("retained draft");
+        app.update_body();
+        let before = serde_json::to_vec(&app.session).unwrap();
+        app.mode = Mode::Settings;
+        snapshot(&mut app, 100, 45).unwrap();
+        let page = app.settings_page_size;
+        let mut pending = None;
+        let mut prefix = None;
+        for code in [
+            KeyCode::PageDown,
+            KeyCode::End,
+            KeyCode::Home,
+            KeyCode::PageDown,
+            KeyCode::PageUp,
+        ] {
+            key(
+                &mut app,
+                KeyEvent::new(code, KeyModifiers::NONE),
+                4,
+                &mut pending,
+                &mut prefix,
+                None,
+            );
+            match code {
+                KeyCode::PageDown => assert_eq!(app.setting_index, page),
+                KeyCode::End => assert_eq!(app.setting_index, app.settings.entries().len() - 1),
+                _ => assert_eq!(app.setting_index, 0),
+            }
+        }
+        assert_eq!(serde_json::to_vec(&app.session).unwrap(), before);
+    }
 
     #[test]
     fn production_update_command_is_explicit_and_keeps_demo_offline_and_drafts_locked() {

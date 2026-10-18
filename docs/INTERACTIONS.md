@@ -138,3 +138,9 @@ Default launch starts a missing live owner and presents account setup for an emp
 ## Production update handover
 
 `:update` requests a background stable-release check without changing the composer. Managed owners also check periodically and on drawer launch. A staged update pauses input only after queued edits/settings have flushed; active QR/credential setup defers acknowledgement. All frontend leases must acknowledge or disconnect, and active sends must finish, before service exec. Reconnect rehydrates the durable draft and frozen recipient without replaying mutations/sends. Managed frontends exec the installed version after reconnect with terminal restoration first. An older unacknowledged client defers handover until closed. See [updates](UPDATES.md).
+
+## Responsive settings workspace
+
+Settings use the full available height, including tall narrow drawers and expanded terminals. Group General, Focus profiles, AI decisions, Spam filtering and Accounts with accent headings. Field names use the main text colour, values the secondary accent, and explanatory notes muted text; selected rows use a continuous full-width surface highlight. Wide windows align name/value columns; narrow windows stack them and wrap by Unicode display cells. Long/multiline values show a bounded preview with an ellipsis/newline marker; Enter edits the full value.
+
+Keep the selected field visible through scrolling, resize and account-list changes. Up/Down and j/k select; PageUp/PageDown move by the visible field count, Home/End select the first/last field, and wheel/click select settings without changing a communication or reply target. Settings viewport state stays local to the window. Use the shared typed registry for all edits. First-account guidance and settings-specific controls remain visible, without a fixed three-entry limit.

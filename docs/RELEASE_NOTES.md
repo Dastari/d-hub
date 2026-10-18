@@ -1,24 +1,17 @@
-Installer migration fix: existing user-owned executables and development symlinks can now be backed up and replaced using:
+Responsive settings for tall drawers and expanded terminals.
 
-```sh
-curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh -s -- --replace
-```
+- Fill the available window height instead of showing only three settings.
+- Accent section headings, clear field names, secondary-colour values and muted help text, with continuous selection shading.
+- Align name/value columns in wide windows; stack and Unicode-wrap fields in narrow windows.
+- PageUp/PageDown, Home/End, mouse wheel and row selection; keep the selected field visible after resize.
+- Preserve active drafts and recipients while browsing/editing settings.
 
-The installer prints the backup path, preserves symlink targets and only replaces the launcher after checksum/version validation. Default installation keeps its existing-file guard and now prints this migration command.
-
-Stable release channel with managed Linux installation and automatic updates.
-
-- Optimized Linux x86_64 (glibc 2.35+) and aarch64 (glibc 2.39+) executables, SHA256SUMS and one-line installer.
-- Background release checks every six hours, on frontend launch, and through :update / d-hub update.
-- Atomic checksum-verified binary replacement, saved drafts, active-send draining, automatic service handover and managed frontend restart.
-- Private SQLite live profiles, persistent replies, account setup, personal Discord QR sign-in and opt-in iCloud/Microsoft mail/Teams transports from the existing preview.
-
-This is an early application release: personal Discord DM synchronization/replies/history, attachment transfers and the Omarchy companion remain unfinished. Live provider and actual desktop acceptance have not been completed by development tools. See README.md, docs/LIVE_SETUP.md and docs/UPDATES.md before enabling accounts. No license has been selected.
-
-Install:
+Use :update in a managed installation, or install:
 
 ```sh
 curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh
 ```
 
-If upgrading from the development build before v0.2.1: save and close the drawer, run `d-hub service stop` once, then install and relaunch. Subsequent managed releases use automatic handover.
+For an existing development executable/symlink, add `-s -- --replace` after `sh` to retain a private launcher backup. Pre-v0.2.1 development services need a one-time save/close and `d-hub service stop` before managed launch.
+
+This remains an early application release: personal Discord DM synchronization/replies/history, attachment transfers and the Omarchy companion remain unfinished. Live account and actual desktop acceptance remain owner setup checks. See README.md and docs/UPDATES.md. No license has been selected.
