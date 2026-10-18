@@ -44,4 +44,4 @@ Update Cargo.toml and Cargo.lock together, update docs/RELEASE_NOTES.md, commit 
 
 GitHub's [release API](https://docs.github.com/en/rest/releases/releases) defines latest-release selection and asset digests; the workflow uses [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create) with draft-first uploads.
 
-For an already-running development service from before v0.2.0, bootstrap once by saving/closing its drawer and running d-hub service stop before the first installed launch. Those versions do not implement the new handover protocol.
+For an already-running development service from before v0.2.1, bootstrap once by saving/closing its drawer and running d-hub service stop before the first installed launch. Those versions do not implement the new handover protocol.
