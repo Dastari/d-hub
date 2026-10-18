@@ -533,13 +533,17 @@ impl App {
             expected: self.session.composer.clone(),
             id,
         });
-        if let Some(draft) = self.session.composer.draft.take() {
+        // Switching is explicit, so an emptied draft is released rather than saved.
+        if let Some(draft) = self.session.composer.draft.take()
+            && !draft.is_empty()
+        {
             self.session.saved.insert(draft.target.draft_key(), draft);
         }
         self.session.composer.target = target.clone();
         self.session.composer.draft = target
             .as_ref()
-            .and_then(|t| self.session.saved.remove(&t.draft_key()));
+            .and_then(|t| self.session.saved.remove(&t.draft_key()))
+            .filter(|d| !d.is_empty());
         self.session.composer.send = SendState::Ready;
         self.selected = Some(id);
         self.mark_seen(id);
@@ -555,7 +559,10 @@ impl App {
         self.record(crate::service::Action::Park {
             expected: self.session.composer.clone(),
         });
-        if let Some(draft) = self.session.composer.draft.take() {
+        // Switching is explicit, so an emptied draft is released rather than saved.
+        if let Some(draft) = self.session.composer.draft.take()
+            && !draft.is_empty()
+        {
             self.session.saved.insert(draft.target.draft_key(), draft);
         }
         self.session.composer.target = None;
@@ -623,6 +630,7 @@ impl App {
     }
 
     /// Delete with no reply started: dismiss the selection and mark it read. Never restores.
+    /// A draft emptied of text and attachments is released first; Delete is the explicit act.
     pub fn dismiss_read(&mut self) {
         let Some(id) = self.selected else {
             return;
@@ -632,6 +640,18 @@ impl App {
             return;
         }
         let ids: Vec<_> = self.burst(id).iter().map(|m| m.id).collect();
+        if self
+            .session
+            .composer
+            .draft
+            .as_ref()
+            .is_some_and(|d| d.is_empty())
+            && self.session.composer.editable()
+        {
+            let target = self.selected_message().and_then(|m| m.target.clone());
+            self.compose(Event::Discard(target));
+            self.sync_editor();
+        }
         self.toggle_dismissed();
         if ids.iter().all(|id| self.dismissed(*id)) {
             let unread: Vec<_> = self

@@ -711,7 +711,8 @@ mod tests {
                         selects += 1;
                         write!(stream, "* 0 EXISTS\r\n* OK [UIDVALIDITY 7] validity\r\n").unwrap();
                     } else if upper.contains("LOGOUT") {
-                        write!(stream, "* BYE\r\n{tag} OK bye\r\n").unwrap();
+                        // The client may close as soon as it reads BYE.
+                        let _ = stream.write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes());
                         break;
                     }
                     write!(stream, "{tag} OK complete\r\n").unwrap();

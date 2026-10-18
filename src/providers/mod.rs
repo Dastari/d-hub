@@ -92,9 +92,12 @@ pub fn text(value: &str) -> String {
     )
 }
 pub fn html(value: &str) -> String {
-    // No resource fetching: links and images are rendered as text.
+    // No resource fetching: links and images are rendered as text. Raw mode reads table cells
+    // in order without borders, since most mail uses tables for layout, not data.
     text(
-        &html2text::from_read(value.as_bytes(), 100)
+        &html2text::config::plain()
+            .raw_mode(true)
+            .string_from_read(value.as_bytes(), 100)
             .unwrap_or_else(|_| "[Unable to render HTML]".into()),
     )
 }
@@ -225,5 +228,25 @@ impl Transport for Network {
             Provider::Office365 | Provider::Teams => self.graph.send(account, item, submission),
             Provider::Discord => self.discord.send(account, item, submission),
         }
+    }
+}
+
+#[cfg(test)]
+mod html_tests {
+    #[test]
+    fn layout_tables_render_as_text_without_borders() {
+        let rendered = super::html(
+            "<table><tr><td>Your Sunday afternoon trip</td><td>$12.00</td></tr>\
+             <tr><td colspan=2>Thanks for riding</td></tr></table>",
+        );
+        for text in ["Your Sunday afternoon trip", "$12.00", "Thanks for riding"] {
+            assert!(rendered.contains(text), "{rendered}");
+        }
+        assert!(
+            !rendered
+                .chars()
+                .any(|c| ('\u{2500}'..='\u{257F}').contains(&c)),
+            "{rendered}"
+        );
     }
 }

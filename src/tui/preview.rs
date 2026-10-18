@@ -34,19 +34,33 @@ fn burst<'a>(app: &'a App, message: &'a Message) -> Vec<&'a Message> {
     burst
 }
 
-/// Wraps each source line separately so a chat's own line breaks survive.
+/// Wraps each source line separately so a message's own line breaks survive. The pane is small,
+/// so blank lines (mostly left behind by HTML and plain-text paragraph spacing) and table rules
+/// are dropped; the reader keeps paragraph breaks.
 fn body_lines(body: &str, width: usize) -> Vec<String> {
-    let body = safe_text(body);
-    let lines: Vec<_> = body
-        .trim()
+    let lines: Vec<_> = safe_text(body)
         .lines()
+        .filter(|line| !line.trim().is_empty() && !crate::domain::rule_line(line))
         .flat_map(|line| wrapped(line, width))
         .collect();
-    if lines.iter().all(|l| l.is_empty()) {
+    if lines.is_empty() {
         vec!["(no text)".into()]
     } else {
         lines
     }
+}
+
+/// Reader text: table rules dropped and any run of blank lines shown as one.
+fn paragraphs(body: &str) -> String {
+    let body = safe_text(body);
+    let mut out: Vec<&str> = vec![];
+    for line in body.trim().lines().map(str::trim_end) {
+        if crate::domain::rule_line(line) || (line.is_empty() && out.last() == Some(&"")) {
+            continue;
+        }
+        out.push(line);
+    }
+    out.join("\n")
 }
 
 /// Preview lines and the line range of the selected message.
@@ -184,7 +198,7 @@ pub(super) fn reader(app: &App) -> Option<(String, String)> {
             "From: {}\nDate: {}\n\n{}",
             from(message),
             when::full(message.timestamp, &safe_text(&message.time)),
-            safe_text(&message.body)
+            paragraphs(&message.body)
         );
         return Some((title, body));
     }
@@ -200,7 +214,7 @@ pub(super) fn reader(app: &App) -> Option<(String, String)> {
             "{} · {}\n{}\n\n",
             when::clock(m.timestamp, &safe_text(&m.time)),
             crate::domain::display_name(&m.sender),
-            safe_text(m.body.trim())
+            paragraphs(&m.body)
         ));
     }
     Some((title, body.trim_end().to_owned()))
@@ -390,6 +404,99 @@ mod tests {
                 .messages
                 .iter()
                 .any(|m| m.id == MessageId(4) && m.unread)
+        );
+    }
+
+    #[test]
+    fn an_emptied_draft_never_blocks_delete_and_is_not_saved_when_switching() {
+        let mut app = inbox();
+        let delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        let backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        app.switch_reply(MessageId(5));
+        // Typing then erasing keeps the lock (nothing may redirect it), labelled as empty.
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            4,
+            &mut None,
+            &mut None,
+            None,
+        );
+        key(&mut app, backspace, 4, &mut None, &mut None, None);
+        assert!(
+            app.session
+                .composer
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.is_empty())
+        );
+        let frame = crate::tui::snapshot(&mut app, 100, 40).unwrap();
+        assert!(frame.contains("LOCKED · empty, Del releases"), "{frame}");
+        // Delete is the explicit release, then dismisses and marks read.
+        key(&mut app, delete, 4, &mut None, &mut None, None);
+        assert!(app.dismissed(MessageId(5)));
+        assert!(
+            app.session
+                .composer
+                .draft
+                .as_ref()
+                .is_none_or(|d| d.target.incoming != MessageId(5))
+        );
+
+        // Switching away from an emptied draft releases it instead of saving it.
+        app.switch_reply(MessageId(4));
+        app.editor.insert("x");
+        app.update_body();
+        key(&mut app, backspace, 4, &mut None, &mut None, None);
+        app.switch_reply(MessageId(3));
+        assert!(
+            app.session.saved.is_empty(),
+            "{:?}",
+            app.session.saved.keys()
+        );
+        app.switch_reply(MessageId(4));
+        assert!(app.session.composer.draft.is_none());
+    }
+
+    #[test]
+    fn delete_while_browsing_dismisses_other_messages_but_never_a_reply_in_progress() {
+        let mut app = inbox();
+        let delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        app.switch_reply(MessageId(5));
+        app.editor.insert("see you there");
+        app.update_body();
+        app.mode = Mode::Navigate;
+        key(&mut app, delete, 4, &mut None, &mut None, None);
+        assert!(!app.dismissed(MessageId(5)));
+        assert!(app.notice.contains("Reply in progress"), "{}", app.notice);
+        app.select(MessageId(4));
+        key(&mut app, delete, 4, &mut None, &mut None, None);
+        assert!(app.dismissed(MessageId(4)));
+        let draft = app.session.composer.draft.as_ref().unwrap();
+        assert_eq!(
+            (draft.target.incoming, draft.body.as_str()),
+            (MessageId(5), "see you there")
+        );
+    }
+
+    #[test]
+    fn previews_skip_blank_lines_and_table_rules_and_the_reader_keeps_one_paragraph_break() {
+        let mut app = inbox();
+        find(&mut app, 5).body =
+            "Your receipt\n────────────┬──\n|\n\n\n\nTotal $12\n-----\nThanks".into();
+        app.select(MessageId(5));
+        let frame = pane(&mut app, 40, 8);
+        let body: Vec<_> = frame.lines().skip(1).map(str::trim).collect();
+        assert_eq!(
+            body[..4],
+            ["Your receipt", "Total $12", "Thanks", ""],
+            "{frame}"
+        );
+        app.open_reader();
+        let (_, reader) = reader(&app).unwrap();
+        assert!(
+            reader.ends_with("\n\nYour receipt\n\nTotal $12\nThanks"),
+            "{reader}"
         );
     }
 

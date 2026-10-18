@@ -23,10 +23,13 @@ pub(super) fn source_label(app: &App, message: &Message) -> String {
         }
         (provider, _) => provider.map_or("unsupported", |p| p.label()),
     };
-    // Name the account so several of one provider stay distinguishable.
+    // Name the account so several of one provider stay distinguishable, unless the name only
+    // repeats the provider ("iCloud · iCloud").
     match configured {
-        Some(account) => format!("{base} · {}", safe_text(account.label())),
-        None => base.to_owned(),
+        Some(account) if !account.label().trim().eq_ignore_ascii_case(base) => {
+            format!("{base} · {}", safe_text(account.label()))
+        }
+        _ => base.to_owned(),
     }
 }
 
@@ -35,7 +38,7 @@ fn body_text(message: &Message) -> String {
     safe_text(&message.body)
         .lines()
         .map(str::trim)
-        .filter(|line| !line.starts_with('>'))
+        .filter(|line| !line.starts_with('>') && !crate::domain::rule_line(line))
         .flat_map(str::split_whitespace)
         .collect::<Vec<_>>()
         .join(" ")
@@ -464,5 +467,18 @@ pub(super) mod tests {
         let frame = feed(&mut app, 60, 30);
         assert!(!frame.contains("demo"));
         assert!(frame.contains("Son  Discord"));
+    }
+
+    #[test]
+    fn account_names_that_repeat_the_provider_are_not_shown_twice() {
+        let mut app = app(vec![message(1, Provider::ICloud, "Apple", "t", "hi")]);
+        let mut account = crate::policy::AccountConfig::new("home", Provider::ICloud);
+        account.name = "iCloud".into();
+        app.settings.accounts.push(account);
+        let frame = feed(&mut app, 60, 30);
+        assert!(frame.contains("Apple  iCloud"), "{frame}");
+        assert!(!frame.contains("iCloud · iCloud"), "{frame}");
+        app.settings.accounts[0].name = "Personal".into();
+        assert!(feed(&mut app, 60, 30).contains("Apple  iCloud · Personal"));
     }
 }

@@ -279,6 +279,19 @@ fn invisible(c: char) -> bool {
     )
 }
 
+/// A line drawn only of table borders or rules ("────", "|", "-----"), as older HTML renders
+/// and plain-text mail produce; previews skip it.
+pub fn rule_line(line: &str) -> bool {
+    let line = line.trim();
+    !line.is_empty()
+        && line.chars().all(|c| {
+            matches!(
+                c,
+                '\u{2500}'..='\u{259F}' | '-' | '=' | '_' | '|' | '+' | '*' | '~' | ' '
+            )
+        })
+}
+
 /// The name part of "Name <address>" (or the address alone), for headings and notices.
 pub fn display_name(sender: &str) -> String {
     let sender = safe_text(sender);

@@ -138,6 +138,17 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
             }
         }
         SendState::Failed(_) => "! FAILED · draft retained ".into(),
+        SendState::Ready
+            if locked
+                && app
+                    .session
+                    .composer
+                    .draft
+                    .as_ref()
+                    .is_some_and(|d| d.is_empty()) =>
+        {
+            "◆ LOCKED · empty, Del releases ".into()
+        }
         SendState::Ready if locked => "◆ LOCKED ".into(),
         _ => "↳ Reply ".into(),
     };

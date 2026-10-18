@@ -243,3 +243,16 @@ New tests cover each of these: TestBackend renders of the preview, the reply box
 ## v0.4.3 publication
 
 [v0.4.3](https://github.com/dastari/d-hub/releases/tag/v0.4.3) is published (provider follow-ups and drawer readability). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39176281246) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39176281392) passed. Locally, all 183 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.3, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Delete with an emptied draft, borderless HTML, tighter previews
+
+Owner feedback on v0.4.3: Delete dismissed once, then did nothing, while the composer showed LOCKED. A draft emptied of text was still pinned to a message, and Delete was ignored without explanation whenever any draft existed.
+- **Delete with an emptied draft.** Delete now releases a draft that has no text or attachments, then dismisses and marks read. In navigation mode it always acts. A message whose reply has text is still refused, with the "Reply in progress" notice.
+- **Emptied drafts are never saved.** Save-and-switch drops an emptied draft, and an empty saved draft from an earlier version is never restored.
+- **LOCKED label.** The status reads "LOCKED · empty, Del releases" while the locked draft is empty.
+- **Borderless HTML.** HTML mail renders layout tables in raw mode, so they have no box-drawing borders. Feed and preview text also skip rule-only lines in mail that was already stored.
+- **Account labels.** An account name that only repeats its provider ("iCloud · iCloud") is shown once.
+- **Preview spacing.** The preview drops blank lines. The reader keeps single paragraph breaks.
+- **Flaky iCloud test fixed.** The fake IMAP server in the connection-reuse test wrote its logout reply in pieces, and the client could close after reading BYE. That failed the test about one run in several. The server now writes once and tolerates the close; 30 consecutive runs pass.
+
+All 188 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. Only fictional data was used.

@@ -9,6 +9,13 @@ pub struct Draft {
     pub revision: u64,
 }
 
+impl Draft {
+    /// No text worth sending and no attachments: nothing would be lost by releasing it.
+    pub fn is_empty(&self) -> bool {
+        self.body.trim().is_empty() && self.attachments.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Submission {
     pub operation: u64,

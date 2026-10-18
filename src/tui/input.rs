@@ -81,11 +81,18 @@ pub(super) fn key(
             app.toggle_dismissed();
             return false;
         }
-        // Delete before a reply is started: dismiss and mark read. With a draft it edits text.
+        // Delete dismisses and marks read: always while browsing, and while typing only before
+        // any text exists (afterwards it edits the reply).
         if key.code == KeyCode::Delete
             && key.modifiers.is_empty()
-            && app.editor.text.is_empty()
-            && app.session.composer.draft.is_none()
+            && (app.mode == Mode::Navigate
+                || (app.editor.text.is_empty()
+                    && app
+                        .session
+                        .composer
+                        .draft
+                        .as_ref()
+                        .is_none_or(|d| d.is_empty())))
         {
             app.dismiss_read();
             return false;
