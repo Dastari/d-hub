@@ -14,6 +14,14 @@ Deliver d-hub as a standalone Rust application with an optional Omarchy companio
 curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh
 ```
 
+If an older executable or development symlink already occupies `~/.local/bin/d-hub`, migrate it with a backup:
+
+```sh
+curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh -s -- --replace
+```
+
+The installer prints the backup location and leaves symlink targets unchanged. It verifies the release before replacing the launcher.
+
 Then run `d-hub` in your terminal. Linux x86_64 and aarch64 production builds install under your user account, without sudo or Rust. Managed installations check for updates every six hours and when the frontend opens; use `:update` to check manually. Updates save drafts, finish active sends and restart the background service and managed frontends. Settings include `auto_update` (default true). See [installation and updates](docs/UPDATES.md) for requirements, paths and recovery.
 
 ## Project status

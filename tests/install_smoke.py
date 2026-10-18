@@ -41,8 +41,8 @@ else:
         home.mkdir()
         env = os.environ | {"HOME": str(home), "XDG_DATA_HOME": str(home / "data"), "PATH": f"{fake_bin}:{os.environ['PATH']}", "FAKE_RELEASE": str(fixture), "FAKE_VERSION": version}
 
-        def install():
-            return subprocess.run(["sh", str(ROOT / "scripts/install.sh")], env=env, capture_output=True, text=True)
+        def install(*arguments):
+            return subprocess.run(["sh", str(ROOT / "scripts/install.sh"), *arguments], env=env, capture_output=True, text=True)
 
         result = install()
         assert result.returncode == 0, result.stderr
@@ -59,9 +59,72 @@ else:
         assert binary.read_bytes() == original
         link.unlink()
         link.write_text("unrelated executable")
-        assert install().returncode != 0
+        refused = install()
+        assert refused.returncode != 0 and "--replace" in refused.stderr
         assert link.read_text() == "unrelated executable"
-    print("Installer smoke passed: spaces in paths, managed symlink, version/checksum, reinstall/backup, corrupt download and existing executable preservation; no HTTP.")
+        # A failed download cannot move the previous launcher or create a backup.
+        assert install("--replace").returncode != 0
+        assert link.read_text() == "unrelated executable"
+        assert not list(link.parent.glob("d-hub-backup.*"))
+        (fixture / name).write_bytes(original)
+        env["FAKE_VERSION"] = "999.0.0"
+        assert install("--replace").returncode != 0
+        assert link.read_text() == "unrelated executable"
+        assert not list(link.parent.glob("d-hub-backup.*"))
+        env["FAKE_VERSION"] = version
+        link.chmod(0o755)
+        migrated = install("--replace")
+        assert migrated.returncode == 0, migrated.stderr
+        backups = set(link.parent.glob("d-hub-backup.*"))
+        assert len(backups) == 1
+        backup = next(iter(backups))
+        assert backup.stat().st_mode & 0o077 == 0
+        assert (backup / "d-hub").read_text() == "unrelated executable"
+        assert (backup / "d-hub").stat().st_mode & 0o777 == 0o755
+        assert str(backup / "d-hub") in migrated.stdout
+        assert link.is_symlink() and link.resolve() == binary
+        # Preserve a source-build symlink as a link; never modify its target.
+        target = home / "dev/build"
+        target.parent.mkdir()
+        target.write_text("source build stays unchanged")
+        link.unlink()
+        link.symlink_to("../../dev/build")
+        assert install("--replace").returncode == 0
+        added = set(link.parent.glob("d-hub-backup.*")) - backups
+        assert len(added) == 1
+        assert os.readlink(next(iter(added)) / "d-hub") == "../../dev/build"
+        assert target.read_text() == "source build stays unchanged"
+        backups |= added
+        # Dangling development links are preserved too.
+        link.unlink()
+        missing = home / "missing-build"
+        link.symlink_to(missing)
+        assert install("--replace").returncode == 0
+        added = set(link.parent.glob("d-hub-backup.*")) - backups
+        assert len(added) == 1
+        assert os.readlink(next(iter(added)) / "d-hub") == str(missing)
+        assert not missing.exists()
+        # Replacing a symlink to a directory must not install inside that directory.
+        backups |= added
+        target_directory = home / "linked directory"
+        target_directory.mkdir()
+        (target_directory / "keep").write_text("retained")
+        link.unlink()
+        link.symlink_to(target_directory)
+        assert install("--replace").returncode == 0
+        added = set(link.parent.glob("d-hub-backup.*")) - backups
+        assert len(added) == 1
+        assert os.readlink(next(iter(added)) / "d-hub") == str(target_directory)
+        assert list(target_directory.iterdir()) == [target_directory / "keep"]
+        # A directory at the launcher path is always refused, even with --replace.
+        link.unlink()
+        link.mkdir()
+        (link / "keep").write_text("retained")
+        assert install("--replace").returncode != 0
+        assert (link / "keep").read_text() == "retained"
+        assert install("--help").returncode == 0
+        assert install("--unknown").returncode != 0
+    print("Installer smoke passed: checksums/version, managed reinstall, explicit file/relative-symlink/dangling-link migration with private backups, preserved targets, validation failure and directory protection; no HTTP.")
 
 
 if __name__ == "__main__":

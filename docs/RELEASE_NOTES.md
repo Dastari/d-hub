@@ -1,3 +1,11 @@
+Installer migration fix: existing user-owned executables and development symlinks can now be backed up and replaced using:
+
+```sh
+curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh -s -- --replace
+```
+
+The installer prints the backup path, preserves symlink targets and only replaces the launcher after checksum/version validation. Default installation keeps its existing-file guard and now prints this migration command.
+
 Stable release channel with managed Linux installation and automatic updates.
 
 - Optimized Linux x86_64 (glibc 2.35+) and aarch64 (glibc 2.39+) executables, SHA256SUMS and one-line installer.
