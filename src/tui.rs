@@ -32,7 +32,7 @@ use std::{
 };
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  motion · preview · help · quit\n\nDemo messages and sends are fictional. Notification capture is read-only.\nImages, live accounts, daemon IPC and the Omarchy plugin are later milestones.";
+const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nPersonal Discord replies, images and the Omarchy plugin remain pending.";
 const COMMANDS: &[&str] = &[
     "attach",
     "remove",
@@ -284,7 +284,9 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             Style::default().fg(p.muted),
         ),
         Span::styled(
-            if app.live_feed {
+            if app.live_service {
+                "  LIVE"
+            } else if app.live_feed {
                 "  NOTIFICATIONS"
             } else if app.service_socket.is_some() {
                 "  SERVICE DEMO"
@@ -403,11 +405,20 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
                 )
             }
         }
-        SendState::Uncertain(_) => "? UNCERTAIN · :reconcile ".into(),
+        SendState::Uncertain(_) => {
+            if app.live_service {
+                "? UNCERTAIN · check original client; retry locked ".into()
+            } else {
+                "? UNCERTAIN · :reconcile ".into()
+            }
+        }
         SendState::Failed(_) => "! FAILED · draft retained ".into(),
         SendState::Ready if locked => "◆ LOCKED ".into(),
         _ => "↳ Reply ".into(),
     };
+    if app.live_service {
+        state = state.replace("MOCK SEND", "SENDING");
+    }
     if composer.width < 40 {
         state = match &app.session.composer.send {
             SendState::Submitting(_) => "… ",
@@ -526,6 +537,8 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
         text(
             if app.live_feed {
                 format!("{mode}  ·  v open Discord  ·  e dismiss  ·  ? help")
+            } else if app.live_service {
+                format!("{mode} · ↑↓ reply · ←→ source · F5 SEND · ? help")
             } else if app.settings.reply_first {
                 format!("{mode} · ↑↓ reply · ←→ source · Alt+arrows cursor · F5 mock send")
             } else {
@@ -556,6 +569,12 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
                     } else {
                         "capture unavailable / starting"
                     }
+                } else if app.live_service {
+                    app.provider_status
+                        .values()
+                        .next()
+                        .map(String::as_str)
+                        .unwrap_or("Waiting for enabled accounts")
                 } else {
                     outcome
                 }
@@ -689,14 +708,34 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
 }
 
 fn send(app: &mut App) -> Option<(Instant, u64, MockOutcome)> {
-    if app.live_feed || app.live_setup {
+    if (app.live_feed || app.live_setup) && !app.live_service {
         app.notice = "Live replies are not implemented · open the official client to reply.".into();
         return None;
+    }
+    if app.live_service {
+        let Some(draft) = app.session.composer.draft.as_ref() else {
+            app.notice = "Write a reply first.".into();
+            return None;
+        };
+        if !app.settings.accounts.iter().any(|a| {
+            a.id == draft.target.account
+                && a.provider == draft.target.provider
+                && a.enabled
+                && a.allow_send
+        }) {
+            app.notice="Sending disabled · enable accounts.ID.allow_send in settings after checking the displayed recipient.".into();
+            return None;
+        }
     }
     app.notice = "No send started · write a reply, or resolve the pending outcome.".into();
     if let Some(operation) = app.submit() {
         if app.shared {
-            app.notice = "Mock send queued with the service · nothing will be delivered.".into();
+            app.notice = if app.live_service {
+                "Reply queued with the live service."
+            } else {
+                "Mock send queued with the service · nothing will be delivered."
+            }
+            .into();
             return None;
         }
         app.notice = "Simulating send locally · no provider is connected.".into();
@@ -819,7 +858,7 @@ fn edit_setting(app: &mut App, name: &str) {
 }
 
 fn begin_auth(app: &mut App, id: &str) {
-    if !app.live_setup {
+    if !app.live_setup && !app.live_service {
         app.notice = "Account setup is explicit · use d-hub settings or d-hub account auth outside the offline demo.".into();
         return;
     }
@@ -901,9 +940,9 @@ fn run_command(app: &mut App, command: &str) -> bool {
     app.mode = Mode::Navigate;
     let words: Vec<_> = command.split_whitespace().collect();
     match words.as_slice() {
-        ["attach"] if !app.live_feed && !app.live_setup => app.attach(),
+        ["attach"] if !app.live_feed && !app.live_setup && !app.live_service => app.attach(),
         ["remove"] => remove_last(app),
-        ["incoming"] if !app.live_feed && !app.live_setup => app.arrive(),
+        ["incoming"] if !app.live_feed && !app.live_setup && !app.live_service => app.arrive(),
         ["follow"] => {
             app.focus(false);
             app.focus(true);
@@ -912,15 +951,15 @@ fn run_command(app: &mut App, command: &str) -> bool {
         }
         ["save-switch"] => app.save_switch(),
         ["discard"] => app.mode = Mode::Discard,
-        ["fail"] => {
+        ["fail"] if !app.live_service => {
             app.next_outcome = MockOutcome::Failure;
             app.notice = "Next mock send will fail.".into();
         }
-        ["uncertain"] => {
+        ["uncertain"] if !app.live_service => {
             app.next_outcome = MockOutcome::Uncertain;
             app.notice = "Next mock send will have uncertain acceptance.".into();
         }
-        ["reconcile"] => {
+        ["reconcile"] if !app.live_service => {
             if let SendState::Uncertain(operation) = &app.session.composer.send {
                 let id = operation.operation;
                 if app.shared {
@@ -932,6 +971,29 @@ fn run_command(app: &mut App, command: &str) -> bool {
                 app.notice =
                     "MOCK RECONCILED · simulated acceptance confirmed without resending.".into();
             }
+        }
+        ["resolve", outcome] if app.live_service && ["accepted", "not-sent"].contains(outcome) => {
+            if let SendState::Uncertain(op) = &app.session.composer.send {
+                let action = crate::service::Action::Resolve {
+                    expected: app.session.composer.clone(),
+                    operation: op.operation,
+                    accepted: *outcome == "accepted",
+                };
+                app.actions.push(action.clone());
+                let shared = app.shared;
+                app.shared = false;
+                let _ = crate::service::apply(app, &action);
+                app.shared = shared;
+                app.notice="Owner-reported outcome recorded; verify in the original client before using resolve.".into();
+            }
+        }
+        ["connections"] => {
+            app.notice = app
+                .provider_status
+                .iter()
+                .map(|(id, s)| format!("{id}: {s}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
         }
         ["settings"] => app.mode = Mode::Settings,
         ["profile", "add", id] => match app.settings.add_profile(id) {
@@ -1020,7 +1082,7 @@ fn key(
             "Simulated focus transition (terminal focus reporting is also enabled).".into();
         return false;
     }
-    if key.code == KeyCode::F(7) {
+    if key.code == KeyCode::F(7) && !app.live_service {
         app.next_outcome = match app.next_outcome {
             MockOutcome::Success => MockOutcome::Failure,
             MockOutcome::Failure => MockOutcome::Uncertain,
@@ -1044,7 +1106,12 @@ fn key(
             launch_reader(app, config_path);
             return false;
         }
-        if control && key.code == KeyCode::Char('a') && !app.live_feed && !app.live_setup {
+        if control
+            && key.code == KeyCode::Char('a')
+            && !app.live_feed
+            && !app.live_setup
+            && !app.live_service
+        {
             app.attach();
             return false;
         }
@@ -1292,8 +1359,12 @@ fn key(
             }
             KeyCode::Char('v') => open_discord(app),
             KeyCode::Char('t') => app.settings.theme = app.settings.theme.next(),
-            KeyCode::Char('n') if !app.live_feed && !app.live_setup => app.arrive(),
-            KeyCode::Char('a') if !app.live_feed && !app.live_setup => app.attach(),
+            KeyCode::Char('n') if !app.live_feed && !app.live_setup && !app.live_service => {
+                app.arrive()
+            }
+            KeyCode::Char('a') if !app.live_feed && !app.live_setup && !app.live_service => {
+                app.attach()
+            }
             KeyCode::Char('x') => remove_last(app),
             KeyCode::Char('s') => app.save_switch(),
             KeyCode::Char('d') => app.mode = Mode::Discard,
@@ -1372,7 +1443,9 @@ fn run_inner(
         if let Some(link) = &mut link {
             dirty |= link.sync(&mut app)?;
         }
-        dirty |= app.poll_background();
+        if link.is_none() || app.auth_job.is_some() {
+            dirty |= app.poll_background();
+        }
         if let Some((deadline, operation, outcome)) = pending
             && Instant::now() >= deadline
         {
@@ -1743,5 +1816,67 @@ mod tests {
         assert_eq!(app.settings.source, SourceFilter::ICloud);
         assert_eq!(app.mode, Mode::Insert);
         assert_eq!(app.session.composer.draft, original);
+    }
+    #[test]
+    fn live_surface_labels_real_sends_and_blocks_disabled_accounts_and_simulation() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.live_service = true;
+        app.shared = true;
+        app.editor.insert("Fictional live reply");
+        app.update_body();
+        app.actions.clear();
+        let mut pending = None;
+        let mut prefix = None;
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert!(app.actions.is_empty());
+        assert!(app.notice.contains("Sending disabled"));
+        let outcome = app.next_outcome;
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.next_outcome, outcome);
+        let frame = snapshot(&mut app, 100, 40).unwrap();
+        assert!(frame.contains("LIVE"));
+        assert!(frame.contains("F5 SEND"));
+        assert!(!frame.contains("SERVICE DEMO"));
+        let account = app
+            .session
+            .composer
+            .draft
+            .as_ref()
+            .unwrap()
+            .target
+            .account
+            .clone();
+        let mut account = crate::policy::AccountConfig::new(&account, Provider::ICloud);
+        account.enabled = true;
+        account.allow_send = true;
+        app.settings.accounts.push(account);
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert!(pending.is_none());
+        assert!(matches!(
+            app.session.composer.send,
+            SendState::Submitting(_)
+        ));
+        assert!(app.notice.contains("live service"));
     }
 }

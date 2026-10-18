@@ -1,6 +1,6 @@
 # d-hub implementation handoff
 
-The owner wants a dedicated TUI communications hub in a narrow Omarchy side window, with Ghostty as the primary terminal. The first offline Rust prototype is implemented; mail/Teams message transports remain pending; an explicit offline SQLite service now supports shared drawer/reader state. Account setup, typed AI decisions and an optional read-only Discord notification bridge now exist; see README and docs/VERIFICATION.md. The owner has authorised a public GitHub project at `dastari/d-hub`.
+The owner wants a TUI communications hub for Omarchy/Ghostty. The public repository is dastari/d-hub. Live iCloud, Microsoft mail and selected Teams chat transports now run in the shared daemon alongside optional AI decisions. The offline demo remains separate. Read [live setup](docs/LIVE_SETUP.md) and [verification](docs/VERIFICATION.md); real account access/sending has not been exercised by development tools. Personal Discord DMs/replies remain essential and unresolved.
 
 ## Development environment
 
@@ -12,9 +12,9 @@ Eight repository-local skills are included under `.agents/skills`; see [skill in
 
 `cargo run --locked -- demo` runs without network access or credentials. The prototype has one mixed chronological fixture feed, focus selection, a multiline composer with fixture attachment chips, navigation/insert modes, mouse interaction and deterministic draft locks. Mock success, failure and uncertain acceptance are explicitly labelled. `--data-dir` enables atomic demo snapshot persistence with one writer; this is not the planned SQLite daemon.
 
-See [verification notes](docs/VERIFICATION.md) for automated and PTY checks. The milestone 2 foundation now includes SQLite migration/import, one state owner, versioned bounded Unix IPC, a sole drawer editor lease, service-owned mock completion, shared readers, setting coordination and recovery files. Continue with provider-normalized records/private attachment staging, HTML conversion, reconnect/event delivery improvements, then actual Ghostty acceptance before marking milestone 2 complete. `preview --demo` still reads immutable fixtures. `daemon --demo --foreground --data-dir DIR --socket PATH`, `drawer --socket PATH` and `preview --socket PATH ID` exercise shared state. Ctrl+o in an attached drawer requests Ghostty with the same socket and opaque ID through argv, with an in-process fallback when spawning fails. Window focus, modified keys and actual second-window behaviour remain unverified on the target desktop.
+See [verification notes](docs/VERIFICATION.md) for automated and PTY checks. The milestone 2 foundation now includes SQLite migration/import, one state owner, versioned bounded Unix IPC, a sole drawer editor lease, service-owned mock completion, shared readers, setting coordination and recovery files. Schema 2 now adds normalized scoped provider records and private local state; mail HTML conversion and daemon AI workers are implemented. Continue with private attachment staging, reconnect/event delivery, owner account smoke tests and actual Ghostty acceptance. `preview --demo` still reads immutable fixtures. `daemon --demo --foreground --data-dir DIR --socket PATH`, `drawer --socket PATH` and `preview --socket PATH ID` exercise shared state. Ctrl+o in an attached drawer requests Ghostty with the same socket and opaque ID through argv, with an in-process fallback when spawning fails. Window focus, modified keys and actual second-window behaviour remain unverified on the target desktop.
 
-After milestone 2, build the Omarchy companion plugin prototype in milestone 2a using fixture data. Prove drawer activation, reliable focus handling and draft preservation on the owner desktop before live integrations. The offline demo remains independent of Omarchy.
+The owner prioritized real-data use on 18 October: live transport work proceeded independently of desktop/plugin acceptance. Continue milestone 2a on the target desktop and retain conservative focus behavior. The offline demo remains independent of Omarchy.
 
 ## Owner decisions already established
 
@@ -25,7 +25,7 @@ After milestone 2, build the Omarchy companion plugin prototype in milestone 2a 
 - Visual direction: minimal borders, open spacing, consistent semantic colours across sources, subtle animated colour shifts and braille activity indicators, with reduced motion available.
 - Sources: iCloud via IMAP, Office 365 mail, Teams and Discord, combined without source tabs.
 - Editable Work/Home and arbitrary focus profiles with per-profile prompts, plus an independent global promotional/spam exclusion policy.
-- Source brand colours, filled unread/hollow read dots, persistent seen state, accepted-reply dismissal, manual dismissal and show-dismissed access. Remote read syncing remains pending provider transports.
+- Source brand colours, filled unread/hollow read dots, persistent seen state, accepted-reply dismissal, manual dismissal and show-dismissed access. Remote read syncing is implemented for iCloud/Microsoft mail; Teams markers remain local.
 - Focus profiles and AI decision filtering, with Jev from TypeSafe AI and OpenAI Decisions provider options. Optional AI summaries are a separate capability.
 - Reply-first navigation (default on): Up/Down explicitly saves/switches per-message drafts, Left/Right switches sources, Alt+arrows moves the text cursor. Keep typing in the composer; pending/uncertain sends block context changes. Draft keys include incoming message identity, and old saved keys are normalized from the stored target.
 - Dedicated context-aware reply box, automatic latest context while inactive and empty, draft locking, file/image paste and attachments.

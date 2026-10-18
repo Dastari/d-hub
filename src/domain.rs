@@ -165,6 +165,8 @@ impl ReplyTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
+    #[serde(default)]
+    pub account_scope: Option<String>,
     pub id: MessageId,
     pub timestamp: u64,
     pub time: String,

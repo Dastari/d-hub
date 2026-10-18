@@ -4,11 +4,13 @@ d-hub is a keyboard-first communications drawer for dastari, built for Arch Linu
 
 The interface uses open spacing, minimal borders and a consistent colour language across sources, with a slow accent shift and braille activity indicators. It aims for a modern AI-harness feel: Unicode, RGB themes, image previews, attachment chips, a command palette, discoverable shortcuts and a multiline input. Focus profiles filter the shared feed without source tabs. Reduced motion is available.
 
-Deliver d-hub as a standalone Rust application with an optional Omarchy companion plugin. The plugin provides an unread/status indicator, drawer activation and quick focus-profile actions; the communications engine and TUI remain in d-hub. Prototype the plugin immediately after the persistent service and reader, before live providers.
+Deliver d-hub as a standalone Rust application with an optional Omarchy companion plugin. The plugin provides an unread/status indicator, drawer activation and quick focus-profile actions; the communications engine and TUI remain in d-hub. The current priority is an owner-tested live mail/Teams feed; the companion remains a separate desktop milestone.
 
 ## Project status
 
-The Rust prototype includes a mixed offline feed, locked drafts, source colours, persistent local read/dismissal state, editable focus profiles, a global spam policy and shared TUI/CLI settings. Explicit keyring setup supports iCloud app passwords, Microsoft device login and Jev/OpenAI keys. Typed decision adapters and optional, read-only Discord desktop notification capture are implemented. An offline SQLite service now owns shared state and mock sends, with one drawer editor and multiple readers over local IPC. Mail/Teams message transports, remote unread sync, live-provider service integration and the Omarchy companion are pending.
+The shared SQLite service now supports opt-in **real iCloud mail, Microsoft mail and selected Teams chats**, with persistent drafts, background sync/replies, remote mail read updates and optional daemon-owned Jev/OpenAI filtering. Live profiles start empty; demo data stays isolated. Sending and account connections default off. Provider tests use local fake servers; owner account and actual desktop acceptance remain pending. Personal Discord replies, attachments and the Omarchy companion are unfinished.
+
+Start with the [real-account setup guide](docs/LIVE_SETUP.md). It covers authentication, a separate live profile, read sync, safe first replies, send recovery and current limits. Running `d-hub` now opens the live drawer; `d-hub demo` remains explicitly offline.
 
 The first Discord delivery needs new personal DMs in the shared arrival-ordered feed and quick replies. Historical context is deferred to phase 2: opening a chat loads recent context, with older pages fetched on demand. A broader client follows in phase 3. History is not an initial-release gate. Discord’s supported bot API cannot supply this personal inbox. The optional notification bridge does **not** satisfy that requirement: it has no history, replies, remote read state or reliable conversation deep link. It remains disabled unless explicitly configured. See [integration limits](docs/INTEGRATIONS.md#discord).
 
@@ -40,7 +42,7 @@ cargo run --locked -- demo --snapshot
 cargo run --locked -- doctor --json
 ```
 
-The `preview --demo` reader still uses immutable fixtures. The shared service reader below reads current stored messages and synchronizes seen state without changing the drawer target. General HTML conversion and actual Ghostty window acceptance remain pending.
+The `preview --demo` reader still uses immutable fixtures. The shared service reader below reads current stored messages and synchronizes seen state without changing the drawer target. Mail HTML is converted to safe terminal text; actual Ghostty window acceptance remains pending.
 
 Settings in a persistent demo profile use the same schema and validation as the CLI:
 
@@ -77,11 +79,11 @@ cargo run --locked -- config --socket ./service-demo/run/service.sock set reply_
 cargo run --locked -- service --socket ./service-demo/run/service.sock stop
 ```
 
-Without `--socket`, service commands use `$XDG_RUNTIME_DIR/d-hub/service-demo.sock`; provide a private path on headless systems. Existing demo JSON in the selected data directory is imported once and retained as a backup; SQLite then owns session state, settings, revisions and the mock outbox. Initial settings come from the profile TOML or explicit global `--config`. While using the service, edit settings through the drawer or `config --socket`; standalone TOML changes do not overwrite service-owned preferences. `config --socket … export` produces portable TOML/JSON through the same typed schema.
+Without `--socket`, drawer/service commands use `$XDG_RUNTIME_DIR/d-hub/service-live.sock`. The demo daemon defaults to service-demo.sock; use an explicit demo socket as above. Existing demo JSON in the selected data directory is imported once and retained as a backup; SQLite then owns session state, settings, revisions and the mock outbox. Initial settings come from the profile TOML or explicit global `--config`. While using the service, edit settings through the drawer or `config --socket`; standalone TOML changes do not overwrite service-owned preferences. `config --socket … export` produces portable TOML/JSON through the same typed schema.
 
 Acknowledged edits survive restart. An interrupted submission becomes uncertain and cannot automatically resend. If the socket disconnects, the drawer freezes edits/sends and writes unacknowledged work to a private recovery file, whose path is shown on exit. After restarting the service, use `drawer --socket PATH --recover RECOVERY_FILE` to restore unsent active/saved drafts. Recovery retains the file, refuses conflicting drafts and unresolved sends, and never replays a send or restores settings implicitly.
 
-This is the persistent-service foundation of milestone 2. It uses transactional JSON domain snapshots inside SQLite plus a separate mock outbox and bounded change ledger. Provider-normalized storage, attachment bytes, live notification/AI worker migration, HTML conversion, automatic reconnect, systemd setup and target-desktop acceptance remain pending.
+This is the persistent-service foundation of milestone 2. It uses transactional JSON domain snapshots inside SQLite plus a separate mock outbox and bounded change ledger. Schema 2 also stores live/demo identity, normalized account-scoped provider records and durable local state. Live adapters and daemon AI ownership are available separately through `daemon --live`; attachment bytes, standalone notification migration, automatic reconnect, systemd setup and target-desktop acceptance remain pending.
 
 ## Settings and explicit setup
 
@@ -113,7 +115,7 @@ cargo run --locked -- config set accounts.home-discord.notification_sender 'Exac
 cargo run --locked -- notifications
 ```
 
-Configure the actual notification title locally; no Discord login/token is requested. Only matching app/title events are retained, with arrival timestamps and duplicate protection. `o` reads the captured preview; `v` requests the official Discord DM list for history/replies, where you must choose the conversation. Titles are not verified user identities. Capture depends on session-bus monitoring permission, notification format and desktop behaviour; messages that Discord does not notify are unavailable. No bus policy, DND, sound or desktop settings are changed. Capture stops on exit; there is no background service yet. A shared user capture lock prevents duplicate capture windows, even with separate data directories. State contains private message previews under the normal XDG state directory, capped at 2,000 items. Desktop acceptance is pending.
+Configure the actual notification title locally; no Discord login/token is requested. Only matching app/title events are retained, with arrival timestamps and duplicate protection. `o` reads the captured preview; `v` requests the official Discord DM list for history/replies, where you must choose the conversation. Titles are not verified user identities. Capture depends on session-bus monitoring permission, notification format and desktop behaviour; messages that Discord does not notify are unavailable. No bus policy, DND, sound or desktop settings are changed. This standalone bridge stops on exit; it is not yet integrated into the shared live daemon. A shared user capture lock prevents duplicate capture windows, even with separate data directories. State contains private message previews under the normal XDG state directory, capped at 2,000 items. Desktop acceptance is pending.
 
 ## Development checks
 

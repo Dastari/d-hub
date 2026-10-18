@@ -108,9 +108,11 @@ pub fn response_json(response: reqwest::blocking::Response) -> Result<Value> {
 
 pub fn graph_scopes(provider: Provider) -> &'static str {
     match provider {
-        Provider::Teams => "offline_access https://graph.microsoft.com/Chat.ReadWrite",
+        Provider::Teams => {
+            "offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Chat.ReadWrite"
+        }
         _ => {
-            "offline_access https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send"
+            "offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send"
         }
     }
 }

@@ -15,3 +15,5 @@ pub mod tui;
 pub mod database;
 pub mod ipc;
 pub mod service;
+
+pub mod providers;

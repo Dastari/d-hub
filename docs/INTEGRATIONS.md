@@ -2,6 +2,10 @@
 
 Provider capabilities differ. Implement explicit capability reporting and preserve useful partial support instead of pretending all sources behave like email. Exact endpoints, consent requirements, quotas and attachment limits must be checked against current provider documentation during implementation.
 
+## Implemented live preview · 18 October 2026
+
+Core iCloud/Microsoft mail sync/read/replies and selected Teams chat sync/replies are implemented; [live setup](LIVE_SETUP.md) records exact scope, consent, history bounds and remaining gaps. Fake IMAP/SMTP/Graph servers verify translation and failures. Owner account acceptance and Sent-copy behavior remain untested. Attachment transfer, archive clients and desktop alerts are pending. Personal Discord access remains unresolved below.
+
 ## iCloud Mail
 
 Use IMAP over TLS to read mail and SMTP with TLS to send. Apple documents `imap.mail.me.com:993` and `smtp.mail.me.com:587`, with an app-specific password for this client setup. Keep account credentials in the credential store. See [Apple mail settings](https://support.apple.com/en-ie/102525).

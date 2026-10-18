@@ -1,4 +1,4 @@
-//! Offline-only service reducer. No credentials, provider sessions or live sends.
+//! Shared owner: commit immutable operations before scheduling provider work.
 use crate::{
     app::{App, MockOutcome, Session},
     composer::{Composer, Event, SendState, Submission},
@@ -48,6 +48,11 @@ pub enum Action {
     Reconcile {
         operation: u64,
     },
+    Resolve {
+        expected: Composer,
+        operation: u64,
+        accepted: bool,
+    },
     Restore {
         expected: Composer,
         draft: Option<crate::composer::Draft>,
@@ -56,6 +61,10 @@ pub enum Action {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub live: bool,
+    #[serde(default)]
+    pub provider_status: std::collections::BTreeMap<String, String>,
     pub revision: u64,
     pub session: Session,
     pub settings: Settings,
@@ -189,6 +198,23 @@ pub fn apply(app: &mut App, action: &Action) -> Result<Option<Submission>> {
             }
             app.sync_editor();
         }
+        Action::Resolve {
+            expected,
+            operation,
+            accepted,
+        } => {
+            if &app.session.composer != expected
+                || !matches!(&app.session.composer.send,SendState::Uncertain(op) if op.operation==*operation)
+            {
+                bail!("No matching uncertain operation");
+            }
+            if *accepted {
+                app.accepted(*operation);
+            } else {
+                app.session.composer.apply(Event::NotSent(*operation));
+            }
+            app.sync_editor();
+        }
         Action::Reconcile { operation } => {
             if !matches!(&app.session.composer.send, SendState::Uncertain(op) if op.operation == *operation)
             {
@@ -201,6 +227,9 @@ pub fn apply(app: &mut App, action: &Action) -> Result<Option<Submission>> {
 }
 
 pub struct Owner {
+    workers: crate::providers::worker::Workers,
+    live: bool,
+    send_running: Option<u64>,
     pub app: App,
     pub revision: u64,
     database: Database,
@@ -208,13 +237,30 @@ pub struct Owner {
 }
 impl Owner {
     pub fn open(mut database: Database) -> Result<Self> {
+        let live = database.live;
         let (mut revision, session, settings) = database.load()?;
         let before = serde_json::to_vec(&session)?;
-        let app = App::new(session, settings)?;
+        let mut app = App::new(session, settings)?;
+        app.live_service = live;
+        app.focused = false;
+        for account in &app.settings.accounts {
+            app.provider_status.insert(
+                account.id.clone(),
+                if account.enabled {
+                    "Connecting"
+                } else {
+                    "Disabled"
+                }
+                .into(),
+            );
+        }
         if serde_json::to_vec(&app.session)? != before {
             revision = database.commit(revision, &app.session, &app.settings, "recovered")?;
         }
         Ok(Self {
+            workers: crate::providers::worker::Workers::default(),
+            live,
+            send_running: None,
             app,
             revision,
             database,
@@ -229,6 +275,8 @@ impl Owner {
                     .first()
                     .is_some_and(|c| c.revision > after.saturating_add(1)));
         Ok(Snapshot {
+            live: self.live,
+            provider_status: self.app.provider_status.clone(),
             revision: self.revision,
             session: self.app.session.clone(),
             settings: self.app.settings.clone(),
@@ -250,16 +298,82 @@ impl Owner {
         staged.selected = self.app.selected;
         staged.focused = self.app.focused;
         let mut pending = self.pending;
+        staged.live_service = self.live;
         for action in actions {
+            if self.live {
+                match action {
+                    Action::Incoming | Action::Reconcile { .. } => {
+                        bail!("Simulated arrivals and reconciliation are disabled in live mode")
+                    }
+                    Action::Compose {
+                        event: Event::Attach(_),
+                        ..
+                    } => bail!(
+                        "Live attachments are not implemented; metadata-only attachments cannot be sent"
+                    ),
+                    Action::Compose {
+                        event: Event::Submit,
+                        ..
+                    } => {
+                        let draft = staged
+                            .session
+                            .composer
+                            .draft
+                            .as_ref()
+                            .context("Write a reply first")?;
+                        let account = staged
+                            .settings
+                            .accounts
+                            .iter()
+                            .find(|a| {
+                                a.id == draft.target.account && a.provider == draft.target.provider
+                            })
+                            .context("Account removed; preserve draft and reconnect")?;
+                        if !account.enabled || !account.allow_send {
+                            bail!("Enable the account and allow_send before sending");
+                        }
+                        if !draft.attachments.is_empty() {
+                            bail!("Remove unsupported live attachments before sending");
+                        }
+                        let item = self
+                            .database
+                            .remote(draft.target.incoming)
+                            .context("Original message unavailable")?;
+                        if item.account_scope != crate::providers::scope(account)
+                            || item.message(draft.target.incoming, account).target.as_ref()
+                                != Some(&draft.target)
+                        {
+                            bail!("Reply identity changed; draft retained");
+                        }
+                    }
+                    Action::Compose {
+                        event: Event::Discard(target),
+                        ..
+                    } => {
+                        if let Some(target) = target
+                            && !staged
+                                .session
+                                .messages
+                                .iter()
+                                .any(|m| m.target.as_ref() == Some(target))
+                        {
+                            bail!("Invalid discard target");
+                        }
+                    }
+                    _ => {}
+                }
+            }
             if let Some(operation) = apply(&mut staged, action)? {
                 let Action::Compose { outcome, .. } = action else {
                     bail!("invalid mock submission");
                 };
-                pending = Some((
-                    Instant::now() + Duration::from_millis(650),
-                    operation.operation,
-                    *outcome,
-                ));
+                if !self.live {
+                    pending = Some((
+                        Instant::now() + Duration::from_millis(650),
+                        operation.operation,
+                        *outcome,
+                    ));
+                }
             }
         }
         if serde_json::to_vec(&staged.session)?.len() > crate::ipc::MAX_FRAME / 2 {
@@ -271,6 +385,26 @@ impl Owner {
             &staged.settings,
             "interaction",
         )?;
+        staged.decision_job = self.app.decision_job.take();
+        staged.decision_attempted = std::mem::take(&mut self.app.decision_attempted);
+        staged.provider_status = std::mem::take(&mut self.app.provider_status);
+        if self.live {
+            staged
+                .provider_status
+                .retain(|id, _| staged.settings.accounts.iter().any(|a| &a.id == id));
+            for account in &staged.settings.accounts {
+                if !account.enabled {
+                    staged
+                        .provider_status
+                        .insert(account.id.clone(), "Disabled".into());
+                } else if !self.app.settings.accounts.iter().any(|a| a == account) {
+                    staged.provider_status.insert(
+                        account.id.clone(),
+                        "Connecting with updated settings".into(),
+                    );
+                }
+            }
+        }
         self.app = staged;
         self.pending = pending;
         Ok(())
@@ -302,7 +436,272 @@ impl Owner {
         }
         Ok(())
     }
+    pub fn refresh(&mut self) {
+        self.workers.refresh();
+    }
+    pub fn with_transport(mut self, factory: crate::providers::worker::Factory) -> Self {
+        self.workers = crate::providers::worker::Workers::new(factory);
+        self
+    }
+    fn ingest(
+        &mut self,
+        account: &crate::policy::AccountConfig,
+        batch: crate::providers::Batch,
+    ) -> Result<()> {
+        let mut staged = App::connected(self.app.session.clone(), self.app.settings.clone())?;
+        staged.live_service = true;
+        staged.focused = self.app.focused;
+        staged.selected = self.app.selected;
+        staged.new_items = self.app.new_items;
+        staged.feed_offset = self.app.feed_offset;
+        staged.provider_status = self.app.provider_status.clone();
+        let anchor = self.app.visible().get(self.app.feed_offset).map(|m| m.id);
+        for item in batch.items {
+            if item.account_scope != crate::providers::scope(account) {
+                bail!("Provider returned a mismatched account identity");
+            }
+            let known = if let Some(id) = self.database.remote_id(&item)? {
+                self.database.imported(id)?
+            } else {
+                false
+            };
+            let id = self.database.store_remote(&item)?;
+            let item = self.database.remote(id)?;
+            if item.deleted {
+                if let Some(message) = staged.session.messages.iter_mut().find(|m| m.id == id) {
+                    message.target = None;
+                    message.incoming = false;
+                    if !message.subject.starts_with("[Unavailable] ") {
+                        message.subject = format!("[Unavailable] {}", message.subject);
+                    }
+                }
+                continue;
+            }
+            if let Some(existing) = staged.session.messages.iter_mut().find(|m| m.id == id) {
+                let unread = existing.unread;
+                *existing = item.message(id, account);
+                existing.unread = unread;
+                if let Some(unread) = item.unread {
+                    staged.receive_unread(id, unread);
+                }
+            } else {
+                // Poll flag windows must not repopulate an older, evicted notification.
+                if known || item.partial {
+                    continue;
+                }
+                if staged.session.messages.len() >= 200 {
+                    let pinned = |id| {
+                        staged.selected == Some(id)
+                            || staged
+                                .session
+                                .composer
+                                .target
+                                .as_ref()
+                                .is_some_and(|t| t.incoming == id)
+                            || staged
+                                .session
+                                .saved
+                                .values()
+                                .any(|d| d.target.incoming == id)
+                            || staged.session.read_changes.contains_key(&id)
+                    };
+                    if let Some(old) = staged
+                        .session
+                        .messages
+                        .iter()
+                        .filter(|m| !pinned(m.id))
+                        .min_by_key(|m| m.timestamp)
+                        .map(|m| m.id)
+                    {
+                        staged.session.messages.retain(|m| m.id != old);
+                        staged.session.message_state.remove(&old);
+                    } else {
+                        self.app.provider_status.insert(
+                            account.id.clone(),
+                            "Sync paused: feed is full of drafts or pending read changes".into(),
+                        );
+                        return Ok(());
+                    }
+                }
+                staged
+                    .session
+                    .message_state
+                    .insert(id, self.database.local_state(id)?);
+                staged.session.messages.push(item.message(id, account));
+                staged.new_items += 1;
+            }
+        }
+        staged
+            .session
+            .sync_cursors
+            .insert(crate::providers::scope(account), batch.cursor);
+        if serde_json::to_vec(&staged.session)?.len() > crate::ipc::MAX_FRAME / 2 {
+            self.app.provider_status.insert(
+                account.id.clone(),
+                "Sync paused: snapshot size limit reached; draft data preserved".into(),
+            );
+            return Ok(());
+        }
+        staged
+            .provider_status
+            .insert(account.id.clone(), batch.status);
+        if !staged.focused {
+            staged.follow_latest();
+        }
+        staged.refresh_filters();
+        if staged.focused
+            && let Some(anchor) = anchor
+            && let Some(index) = staged.visible().iter().position(|m| m.id == anchor)
+        {
+            staged.feed_offset = index;
+        }
+        staged.decision_job = self.app.decision_job.take();
+        staged.decision_attempted = std::mem::take(&mut self.app.decision_attempted);
+        self.app = staged;
+        Ok(())
+    }
+    fn tick_live(&mut self) -> Result<()> {
+        use crate::providers::{SendResult, worker::Outcome};
+        for result in self.workers.collect() {
+            let current = self
+                .app
+                .settings
+                .accounts
+                .iter()
+                .any(|a| *a == result.account && a.enabled);
+            match result.outcome {
+                Outcome::Send(operation, outcome) => {
+                    if matches!(&self.app.session.composer.send,SendState::Submitting(op) if op.operation==operation)
+                    {
+                        match outcome {
+                            SendResult::Accepted => self.app.accepted(operation),
+                            SendResult::Failed(error) => {
+                                self.app
+                                    .session
+                                    .composer
+                                    .apply(Event::Failed(operation, error));
+                            }
+                            SendResult::Uncertain => {
+                                self.app.session.composer.apply(Event::Uncertain(operation));
+                            }
+                        }
+                        self.app.provider_status.insert(result.account.id.clone(),match &self.app.session.composer.send {
+                            SendState::Uncertain(_)=>"Send outcome uncertain · check original client before resolving".into(),
+                            SendState::Failed(error)=>error.clone(),
+                            _=>"Reply accepted by provider · delivery is not guaranteed".into(),
+                        });
+                        self.revision = self.database.commit(
+                            self.revision,
+                            &self.app.session,
+                            &self.app.settings,
+                            "live_send_result",
+                        )?;
+                    }
+                    self.send_running = None;
+                }
+                Outcome::Read(change, result) if current => {
+                    self.app.acknowledge_read(
+                        change.message,
+                        change.revision,
+                        result.map_err(|e| e.to_string()),
+                    );
+                    self.revision = self.database.commit(
+                        self.revision,
+                        &self.app.session,
+                        &self.app.settings,
+                        "remote_read_result",
+                    )?;
+                }
+                Outcome::Sync(sync_result) if current => {
+                    match sync_result {
+                        Ok(batch) => {
+                            self.ingest(&result.account, batch)?;
+                        }
+                        Err(error) => {
+                            self.app.provider_status.insert(
+                                result.account.id.clone(),
+                                crate::domain::safe_text(&error.to_string()),
+                            );
+                        }
+                    }
+                    self.revision = self.database.commit(
+                        self.revision,
+                        &self.app.session,
+                        &self.app.settings,
+                        "provider_sync",
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        if self.app.poll_background() {
+            self.revision = self.database.commit(
+                self.revision,
+                &self.app.session,
+                &self.app.settings,
+                "decision_result",
+            )?;
+        }
+        let send = if self.send_running.is_none() {
+            if let SendState::Submitting(op) = &self.app.session.composer.send {
+                let ready = self.app.settings.accounts.iter().any(|a| {
+                    a.enabled
+                        && a.allow_send
+                        && a.id == op.draft.target.account
+                        && a.provider == op.draft.target.provider
+                });
+                if !ready {
+                    let id = op.operation;
+                    self.app.session.composer.apply(Event::Failed(
+                        id,
+                        "Account disabled or removed before submission".into(),
+                    ));
+                    self.revision = self.database.commit(
+                        self.revision,
+                        &self.app.session,
+                        &self.app.settings,
+                        "send_validation_failed",
+                    )?;
+                    return Ok(());
+                }
+                match self.database.remote(op.draft.target.incoming) {
+                    Ok(item) => Some((item, op.clone())),
+                    Err(_) => {
+                        let operation = op.operation;
+                        self.app.session.composer.apply(Event::Failed(
+                            operation,
+                            "Original message unavailable".into(),
+                        ));
+                        self.revision = self.database.commit(
+                            self.revision,
+                            &self.app.session,
+                            &self.app.settings,
+                            "send_validation_failed",
+                        )?;
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let operation = send.as_ref().map(|(_, op)| op.operation);
+        if self.workers.schedule(
+            &self.app.settings.accounts,
+            &self.app.session.sync_cursors,
+            &self.app.session.read_changes,
+            send,
+        ) {
+            self.send_running = operation;
+        }
+        Ok(())
+    }
     pub fn tick(&mut self) -> Result<()> {
+        if self.live {
+            return self.tick_live();
+        }
         if let Some((when, operation, outcome)) = self.pending
             && Instant::now() >= when
         {

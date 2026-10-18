@@ -10,7 +10,7 @@ pub fn messages() -> Vec<Message> {
     ].into_iter().map(|(id, provider, focus, sender, subject, body)| {
         let account = if focus == Focus::Work { "demo-work" } else { "demo-personal" };
         Message {
-            id: MessageId(id), timestamp: 1_000 + id, time: format!("10:{:02}", 35 + id),
+            account_scope: None,            id: MessageId(id), timestamp: 1_000 + id, time: format!("10:{:02}", 35 + id),
             sender: sender.into(), subject: subject.into(), body: body.into(), focus,
             unread: true, incoming: true,
             remote: None,

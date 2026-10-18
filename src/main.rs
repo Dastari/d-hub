@@ -12,8 +12,8 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(
     version,
-    about = "A communications drawer · offline demo and opt-in notification capture",
-    long_about = "d-hub: a communications drawer. Demo is entirely offline. Settings supports explicit account setup; notifications captures matching official Discord desktop notifications only. Personal Discord history and replies are not implemented."
+    about = "A communications drawer · live iCloud, Microsoft mail and Teams",
+    long_about = "d-hub: one communications feed with persistent replies. Demo is entirely offline; daemon --live connects explicitly enabled accounts. Personal Discord replies remain unavailable."
 )]
 struct Cli {
     #[arg(
@@ -53,7 +53,7 @@ enum Command {
         #[arg(long, default_value_t = 36, value_parser = clap::value_parser!(u16).range(1..=150))]
         height: u16,
     },
-    /// Read a fixture or a stored message through the shared offline service
+    /// Read a fixture or a stored message through the shared service
     Preview {
         #[arg(
             long,
@@ -65,7 +65,7 @@ enum Command {
         #[arg(
             long,
             value_name = "PATH",
-            help = "Connect to a running offline demo service"
+            help = "Connect to a running shared service"
         )]
         socket: Option<PathBuf>,
         message_id: u64,
@@ -89,23 +89,31 @@ enum Command {
     },
     /// Manage account metadata and explicitly store credentials in the desktop keyring
     Account {
+        #[arg(long)]
+        socket: Option<PathBuf>,
         #[command(subcommand)]
         action: AccountAction,
     },
     /// Manage configurable focus profiles
     Profile {
+        #[arg(long)]
+        socket: Option<PathBuf>,
         #[command(subcommand)]
         action: ProfileAction,
     },
     /// Explicitly store an AI provider API key (never pass the key in an argument)
     AiAuth {
         #[arg(long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
         secret_stdin: bool,
     },
-    /// Run the persistent offline-only service in the foreground (no account access)
+    /// Run the persistent service; choose isolated offline demo or opt-in live accounts
     Daemon {
-        #[arg(long, required = true)]
+        #[arg(long, required_unless_present = "live", conflicts_with = "live")]
         demo: bool,
+        #[arg(long, required_unless_present = "demo", conflicts_with = "demo")]
+        live: bool,
         #[arg(long, required = true)]
         foreground: bool,
         #[arg(long, value_name = "DIR")]
@@ -113,7 +121,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
     },
-    /// Open the sole draft editor attached to the offline service
+    /// Open the sole draft editor attached to the shared service (defaults to live)
     Drawer {
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
@@ -124,7 +132,7 @@ enum Command {
         )]
         recover: Option<PathBuf>,
     },
-    /// Inspect or stop the running offline service
+    /// Inspect, refresh, reconcile or stop the shared service (defaults to live)
     Service {
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
@@ -157,6 +165,14 @@ enum ConfigAction {
 
 #[derive(Subcommand)]
 enum ServiceAction {
+    /// Resolve an uncertain send only after verifying it in the original client
+    Resolve {
+        operation: u64,
+        #[arg(value_parser=["accepted","not-sent"])]
+        outcome: String,
+    },
+    /// Request another sync without restarting the daemon
+    Refresh,
     Status,
     Snapshot,
     Stop,
@@ -198,6 +214,37 @@ fn store_secret(reference: &str, stdin: bool) -> Result<()> {
     d_hub::auth::SecretService.store(reference, &secret)
 }
 
+fn settings_location(
+    config: Option<PathBuf>,
+    socket: Option<PathBuf>,
+) -> Result<(Settings, PathBuf, Option<d_hub::ipc::Client>)> {
+    let path = config.map(Ok).unwrap_or_else(config::default_path)?;
+    let client = socket
+        .as_deref()
+        .map(|p| d_hub::ipc::Client::connect(p, d_hub::ipc::Role::Control))
+        .transpose()?;
+    let settings = if let Some(client) = &client {
+        client.snapshot.settings.clone()
+    } else {
+        Settings::load(&path)?
+    };
+    Ok((settings, path, client))
+}
+fn persist_settings(
+    settings: &Settings,
+    path: &std::path::Path,
+    client: &mut Option<d_hub::ipc::Client>,
+) -> Result<()> {
+    if let Some(client) = client {
+        client.request_snapshot(d_hub::ipc::Command::Configure {
+            expected_revision: client.snapshot.revision,
+            settings: settings.clone(),
+        })?;
+        Ok(())
+    } else {
+        settings.save(path)
+    }
+}
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -209,11 +256,9 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let command = cli.command.unwrap_or(Command::Demo {
-        data_dir: None,
-        snapshot: false,
-        width: 66,
-        height: 36,
+    let command = cli.command.unwrap_or(Command::Drawer {
+        socket: None,
+        recover: None,
     });
     match command {
         Command::Demo {
@@ -277,6 +322,8 @@ fn run(cli: Cli) -> Result<()> {
                     let mut app = App::connected(snapshot.session, snapshot.settings)?;
                     app.reader = Some(message);
                     app.mode = d_hub::app::Mode::Reader;
+                    app.live_service = snapshot.live;
+                    app.provider_status = snapshot.provider_status;
                     app.service_socket = Some(socket.clone());
                     let link = d_hub::ipc::Link::new(client, socket, Some(MessageId(message_id)));
                     tui::run_connected(app, link, true)?;
@@ -402,7 +449,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             app.mode = d_hub::app::Mode::Settings;
             app.live_setup = true;
-            app.notice = "Account metadata and prompts are editable here. :account add PROVIDER ID · :auth ID or :auth ai. Live message transports are pending.".into();
+            app.notice = "Account metadata and prompts are editable here. :account add PROVIDER ID · :auth ID or :auth ai. Enable an account in a separate live service profile to connect.".into();
             tui::run(app, None, Some(&path), false)?;
         }
         Command::Notifications { data_dir } => {
@@ -458,25 +505,24 @@ fn run(cli: Cli) -> Result<()> {
             app.notice = "Starting opt-in Discord notification capture · read-only, no history, no remote read sync, no replies. v requests the official Discord app.".into();
             tui::run(app, Some(&store), Some(&path), false)?;
         }
-        Command::Account { action } => {
+        Command::Account { action, socket } => {
             use d_hub::auth::CredentialStore;
-            let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;
-            let mut settings = Settings::load(&path)?;
+            let (mut settings, path, mut service) = settings_location(cli.config, socket)?;
             match action {
                 AccountAction::List => {
-                    let rows: Vec<_> = settings.accounts.iter().map(|a| serde_json::json!({"id":a.id,"provider":a.provider,"authentication":a.auth_description(),"allow_ai":a.allow_ai,"message_transport_connected":false})).collect();
+                    let rows: Vec<_> = settings.accounts.iter().map(|a| serde_json::json!({"id":a.id,"provider":a.provider,"authentication":a.auth_description(),"allow_ai":a.allow_ai,"enabled":a.enabled,"allow_send":a.allow_send})).collect();
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
                 AccountAction::Add { provider, id } => {
                     settings.add_account(&id, tui::parse_provider(&provider)?)?;
-                    settings.save(&path)?;
+                    persist_settings(&settings, &path, &mut service)?;
                 }
                 AccountAction::Remove { id } => {
                     if !settings.accounts.iter().any(|a| a.id == id) {
                         bail!("unknown account");
                     }
                     settings.accounts.retain(|a| a.id != id);
-                    settings.save(&path)?;
+                    persist_settings(&settings, &path, &mut service)?;
                     eprintln!(
                         "Account metadata removed; use account forget before removal to erase stored credentials."
                     );
@@ -509,37 +555,44 @@ fn run(cli: Cli) -> Result<()> {
                         )?;
                     } else {
                         store_secret(&account.credential_ref(), secret_stdin)?;
-                        eprintln!("Credential stored. Message transport is not connected yet.");
+                        eprintln!(
+                            "Credential stored. Enable this account in your live service settings to connect."
+                        );
                     }
                 }
                 AccountAction::Forget { id } => {
                     if !d_hub::policy::identifier(&id) {
                         bail!("invalid account ID");
                     }
+                    if let Some(account) = settings.accounts.iter_mut().find(|a| a.id == id) {
+                        account.enabled = false;
+                        persist_settings(&settings, &path, &mut service)?;
+                    }
                     d_hub::auth::SecretService.remove(&format!("account-{id}"))?;
                 }
             }
         }
-        Command::Profile { action } => {
-            let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;
-            let mut settings = Settings::load(&path)?;
+        Command::Profile { action, socket } => {
+            let (mut settings, path, mut service) = settings_location(cli.config, socket)?;
             match action {
                 ProfileAction::List => {
                     println!("{}", serde_json::to_string_pretty(&settings.profiles)?)
                 }
                 ProfileAction::Add { id } => {
                     settings.add_profile(&id)?;
-                    settings.save(&path)?;
+                    persist_settings(&settings, &path, &mut service)?;
                 }
                 ProfileAction::Remove { id } => {
                     settings.remove_profile(&id)?;
-                    settings.save(&path)?;
+                    persist_settings(&settings, &path, &mut service)?;
                 }
             }
         }
-        Command::AiAuth { secret_stdin } => {
-            let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;
-            let settings = Settings::load(&path)?;
+        Command::AiAuth {
+            secret_stdin,
+            socket,
+        } => {
+            let (settings, _, _) = settings_location(cli.config, socket)?;
             store_secret(settings.ai.provider.credential_ref(), secret_stdin)?;
             eprintln!(
                 "AI credential stored. External processing still requires ai.enabled and account allow_ai."
@@ -547,6 +600,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Daemon {
             demo: _,
+            live,
             foreground: _,
             data_dir,
             socket,
@@ -555,17 +609,37 @@ fn run(cli: Cli) -> Result<()> {
                 bail!("daemon is a foreground process; use service status --json");
             }
             let path = cli.config.unwrap_or_else(|| data_dir.join("config.toml"));
-            let database = d_hub::database::Database::open(&data_dir, &Settings::load(&path)?)?;
+            let _live_owner = if live {
+                let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(PathBuf::from)
+                    .context("XDG_RUNTIME_DIR is required for the live owner lock")?;
+                Some(
+                    DemoStore::open(runtime.join("d-hub/live-owner"))
+                        .context("another live service already owns provider sessions")?,
+                )
+            } else {
+                None
+            };
+            let database =
+                d_hub::database::Database::open_mode(&data_dir, &Settings::load(&path)?, live)?;
             d_hub::ipc::serve(
                 database,
-                &socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?,
+                &socket.map(Ok).unwrap_or_else(|| {
+                    if live {
+                        d_hub::ipc::default_live_socket()
+                    } else {
+                        d_hub::ipc::default_socket()
+                    }
+                })?,
             )?;
         }
         Command::Drawer { socket, recover } => {
             if cli.json {
                 bail!("drawer is interactive; use service snapshot --json");
             }
-            let socket = socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?;
+            let socket = socket
+                .map(Ok)
+                .unwrap_or_else(d_hub::ipc::default_live_socket)?;
             let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Drawer)?;
             if let Some(path) = recover {
                 d_hub::ipc::restore(&mut client, &path)?;
@@ -576,48 +650,69 @@ fn run(cli: Cli) -> Result<()> {
             app.focused = snapshot.focused;
             app.shared = true;
             app.service_socket = Some(socket.clone());
-            app.notice =
-                "Connected to offline service · one draft editor, shared readers, simulated sends."
-                    .into();
+            app.live_service = snapshot.live;
+            app.provider_status = snapshot.provider_status;
+            app.notice = if app.live_service {
+                "LIVE · replies go to the displayed recipient when account allow_send is enabled."
+            } else {
+                "Connected to offline service · simulated sends."
+            }
+            .into();
             let link = d_hub::ipc::Link::new(client, socket, None);
             app.service_socket = Some(link.socket.clone());
             tui::run_connected(app, link, false)?;
         }
         Command::Service { socket, action } => {
-            let socket = socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?;
+            let socket = socket
+                .map(Ok)
+                .unwrap_or_else(d_hub::ipc::default_live_socket)?;
             let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Control)?;
             match action {
+                ServiceAction::Resolve { operation, outcome } => {
+                    client.request_snapshot(d_hub::ipc::Command::Resolve {
+                        expected_revision: client.snapshot.revision,
+                        operation,
+                        accepted: outcome == "accepted",
+                    })?;
+                    println!(
+                        "Owner-reported send outcome recorded; no message was sent by this command."
+                    );
+                }
+                ServiceAction::Refresh => {
+                    client.request_snapshot(d_hub::ipc::Command::Refresh)?;
+                    println!("Sync requested.");
+                }
                 ServiceAction::Snapshot => {
                     println!("{}", serde_json::to_string_pretty(&client.snapshot)?)
                 }
                 ServiceAction::Status => println!(
                     "{}",
                     serde_json::to_string_pretty(
-                        &serde_json::json!({"protocol":d_hub::ipc::VERSION,"mode":"offline-demo","revision":client.snapshot.revision,"editor_connected":client.snapshot.editor_connected,"messages":client.snapshot.session.messages.len(),"live_providers":false})
+                        &serde_json::json!({"protocol":d_hub::ipc::VERSION,"mode":if client.snapshot.live {"live"}else{"offline-demo"},"provider_status":client.snapshot.provider_status,"revision":client.snapshot.revision,"editor_connected":client.snapshot.editor_connected,"messages":client.snapshot.session.messages.len(),"live_providers":client.snapshot.live})
                     )?
                 ),
                 ServiceAction::Stop => match client.request(d_hub::ipc::Command::Stop)? {
-                    d_hub::ipc::Reply::Stopped => println!("Offline service stopped."),
+                    d_hub::ipc::Reply::Stopped => println!("Service stopped."),
                     _ => bail!("service did not acknowledge shutdown"),
                 },
             }
         }
         Command::Doctor => {
             let value = serde_json::json!({
-                "version": env!("CARGO_PKG_VERSION"), "mode": "prototype", "live_providers": false,
+                "version": env!("CARGO_PKG_VERSION"), "mode": "live-preview", "live_providers": true,
                 "discord_personal_history": false, "discord_personal_replies": false,
                 "discord_notification_capture": "opt-in, desktop unverified",
-                "account_setup": true, "typed_decision_adapters": true, "remote_read_sync": false,
-                "network_access": true, "demo_network_access": false, "daemon_ipc": true, "daemon_mode": "offline-demo-only", "sqlite_storage": true, "shared_reader": true, "omarchy_plugin": false,
+                "account_setup": true, "secret_service_helper_available":d_hub::auth::SecretService::available(), "typed_decision_adapters": true, "remote_read_sync": ["icloud","office365"],
+                "network_access": true, "demo_network_access": false, "daemon_ipc": true, "daemon_mode": ["live","offline-demo"], "sqlite_storage": true, "shared_reader": true, "omarchy_plugin": false,
                 "image_graphics": false, "fixture_reader": true,
                 "ghostty_desktop_verified": false,
-                "pending": ["Personal Discord DM history and replies", "Mail/Teams message transports and remote unread sync", "Live account/AI authentication tests", "Ghostty focus and modified keys", "Wayland clipboard", "terminal graphics", "Omarchy DND and plugin lifecycle"],
+                "pending": ["Personal Discord DM history and replies", "Provider attachment downloads/uploads", "Live account/AI authentication tests", "Ghostty focus and modified keys", "Wayland clipboard", "terminal graphics", "Omarchy DND and plugin lifecycle"],
             });
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "d-hub {} · prototype\n\nImplemented: mixed feed, locked drafts, SQLite offline service, shared reader, local read/dismissal, editable profiles, spam prompts, account setup, typed AI adapters and opt-in Discord notification capture.\nPending: personal Discord history/replies, mail/Teams transports, remote read sync, live service integration, image graphics, rich clipboard, Omarchy companion plugin.\nActual Ghostty/Omarchy desktop checks have not been run.",
+                    "d-hub {} · live preview\n\nImplemented: mixed feed, locked drafts, SQLite service with isolated live/demo profiles, shared reader, local read/dismissal, editable profiles, spam prompts, account setup, typed AI adapters and opt-in Discord notification capture.\nImplemented live transports: iCloud IMAP/SMTP, Microsoft mail delta/reply/read sync, Teams chat sync/replies (local read markers). Pending: personal Discord replies/history, attachments, images, rich clipboard and Omarchy companion plugin.\nActual Ghostty/Omarchy desktop checks have not been run.",
                     env!("CARGO_PKG_VERSION")
                 );
             }

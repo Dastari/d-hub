@@ -44,6 +44,7 @@ pub enum Event {
     Accepted(u64),
     Failed(u64, String),
     Uncertain(u64),
+    NotSent(u64),
 }
 
 impl Composer {
@@ -140,6 +141,12 @@ impl Composer {
                     && operation.operation == id
                 {
                     self.send = SendState::Failed(safe_text(&error));
+                }
+            }
+            Event::NotSent(id) => {
+                if matches!(&self.send,SendState::Uncertain(op) if op.operation==id) {
+                    self.send =
+                        SendState::Failed("Owner confirmed not sent; draft unlocked".into());
                 }
             }
             Event::Uncertain(id) => {

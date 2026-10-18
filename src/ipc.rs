@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +54,12 @@ pub enum Command {
         expected_revision: u64,
         settings: crate::config::Settings,
     },
+    Resolve {
+        expected_revision: u64,
+        operation: u64,
+        accepted: bool,
+    },
+    Refresh,
     Stop,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +118,11 @@ fn peer(stream: &UnixStream) -> Result<()> {
         bail!("IPC peer belongs to another user");
     }
     Ok(())
+}
+pub fn default_live_socket() -> Result<PathBuf> {
+    let mut path = default_socket()?;
+    path.set_file_name("service-live.sock");
+    Ok(path)
 }
 pub fn default_socket() -> Result<PathBuf> {
     Ok(PathBuf::from(
@@ -172,6 +183,8 @@ impl Client {
 }
 fn empty_snapshot() -> Snapshot {
     Snapshot {
+        live: false,
+        provider_status: std::collections::BTreeMap::new(),
         revision: 0,
         session: crate::app::Session::default(),
         settings: crate::config::Settings::default(),
@@ -307,6 +320,7 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                 roles.remove(&id);
                 if editor == Some(id) {
                     editor = None;
+                    owner.actions(owner.revision, &[Action::Focus { focused: false }])?;
                 }
             }
             Ok(Delivery::Request {
@@ -338,6 +352,8 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                             entry.insert(role);
                             if role == Role::Drawer {
                                 editor = Some(id);
+                                owner
+                                    .actions(owner.revision, &[Action::Focus { focused: true }])?;
                             }
                             Reply::Snapshot {
                                 snapshot: Box::new(owner.snapshot(0, editor.is_some())?),
@@ -405,6 +421,33 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                                     },
                                     Err(e) => error("invalid", e.to_string()),
                                 }
+                            }
+                        }
+                        Command::Resolve {
+                            expected_revision,
+                            operation,
+                            accepted,
+                        } if *role == Role::Control => {
+                            match owner.actions(
+                                expected_revision,
+                                &[Action::Resolve {
+                                    expected: owner.app.session.composer.clone(),
+                                    operation,
+                                    accepted,
+                                }],
+                            ) {
+                                Ok(()) => Reply::Snapshot {
+                                    snapshot: Box::new(
+                                        owner.snapshot(expected_revision, editor.is_some())?,
+                                    ),
+                                },
+                                Err(e) => error("invalid", e.to_string()),
+                            }
+                        }
+                        Command::Refresh if *role != Role::Reader => {
+                            owner.refresh();
+                            Reply::Snapshot {
+                                snapshot: Box::new(owner.snapshot(0, editor.is_some())?),
                             }
                         }
                         Command::Stop if *role == Role::Control => {
@@ -568,6 +611,8 @@ impl Link {
                     self.revision = snapshot.revision;
                     app.session = snapshot.session;
                     app.settings = snapshot.settings;
+                    app.live_service = snapshot.live;
+                    app.provider_status = snapshot.provider_status;
                     app.selected = snapshot.selected;
                     app.focused = snapshot.focused;
                     let shared = app.shared;
@@ -586,8 +631,10 @@ impl Link {
                     }
                     app.shared = shared;
                     app.mode = mode;
-                    if let Some(id) = self.reader.or(previous_reader) {
-                        app.reader = app.session.messages.iter().find(|m| m.id == id).cloned();
+                    if let Some(id) = self.reader.or(previous_reader)
+                        && let Some(message) = app.session.messages.iter().find(|m| m.id == id)
+                    {
+                        app.reader = Some(message.clone());
                     }
                     app.sync_editor();
                     if editor.text == app.editor.text {
@@ -660,7 +707,7 @@ pub fn restore(client: &mut Client, path: &Path) -> Result<()> {
     }
     let recovery: Recovery =
         serde_json::from_slice(&bytes).context("invalid drawer recovery file")?;
-    if recovery.protocol != VERSION || !recovery.session.composer.editable() {
+    if ![1, VERSION].contains(&recovery.protocol) || !recovery.session.composer.editable() {
         bail!(
             "recovery has an incompatible protocol or unresolved send; reconcile the service outbox first"
         );

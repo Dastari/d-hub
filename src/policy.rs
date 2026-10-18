@@ -93,6 +93,12 @@ impl Default for AiSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub allow_send: bool,
+    #[serde(default = "default_poll_seconds")]
+    pub poll_seconds: u64,
     pub id: String,
     pub provider: Provider,
     #[serde(default)]
@@ -113,6 +119,9 @@ pub struct AccountConfig {
     pub notification_app: String,
 }
 
+fn default_poll_seconds() -> u64 {
+    30
+}
 fn default_tenant() -> String {
     "organizations".into()
 }
@@ -128,6 +137,9 @@ impl AccountConfig {
         Self {
             id: id.into(),
             provider,
+            enabled: false,
+            allow_send: false,
+            poll_seconds: default_poll_seconds(),
             username: String::new(),
             tenant: default_tenant(),
             client_id: String::new(),
@@ -200,6 +212,9 @@ pub fn validate(
     }
     ids.clear();
     for account in accounts {
+        if !(15..=3600).contains(&account.poll_seconds) {
+            bail!("account poll_seconds must be 15-3600");
+        }
         if !identifier(&account.id) || !ids.insert(&account.id) {
             bail!("account IDs must be unique simple identifiers");
         }

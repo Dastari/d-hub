@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RemoteMessage {
+    GraphChat {
+        account: String,
+        chat: String,
+        message: String,
+    },
     Imap {
         account: String,
         mailbox: String,
@@ -27,6 +32,8 @@ pub struct MessageState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadChange {
+    #[serde(default)]
+    pub account_scope: Option<String>,
     pub message: MessageId,
     pub remote: RemoteMessage,
     pub unread: bool,

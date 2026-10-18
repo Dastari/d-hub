@@ -26,7 +26,7 @@ class Reader:
         return bytes(result)
 
     def call(self, command):
-        message = json.dumps({"version": 1, "command": command}).encode()
+        message = json.dumps({"version": 2, "command": command}).encode()
         self.stream.sendall(struct.pack(">I", len(message)) + message)
         response = json.loads(self.exact(struct.unpack(">I", self.exact(4))[0]))
         assert response["result"] != "error", response

@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub sync_cursors: BTreeMap<String, serde_json::Value>,
     pub schema_version: u32,
     pub messages: Vec<Message>,
     pub composer: Composer,
@@ -29,6 +31,7 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             schema_version: 1,
+            sync_cursors: BTreeMap::new(),
             messages: fixtures::messages(),
             composer: Composer::default(),
             saved: BTreeMap::new(),
@@ -69,6 +72,8 @@ pub type PendingDecision = (
 
 pub struct App {
     pub shared: bool,
+    pub live_service: bool,
+    pub provider_status: BTreeMap<String, String>,
     pub service_socket: Option<std::path::PathBuf>,
     pub actions: Vec<crate::service::Action>,
     pub session: Session,
@@ -135,6 +140,8 @@ impl App {
         let editor = Editor::new(session.composer.body());
         let mut app = Self {
             shared: false,
+            live_service: false,
+            provider_status: BTreeMap::new(),
             service_socket: None,
             actions: vec![],
             session,
@@ -683,6 +690,7 @@ impl App {
             self.session.read_changes.insert(
                 id,
                 ReadChange {
+                    account_scope: message.account_scope.clone(),
                     message: id,
                     remote: remote.clone(),
                     unread,
@@ -747,7 +755,7 @@ impl App {
     }
 
     fn hold_pending(&self, message: &Message) -> bool {
-        self.live_feed
+        (self.live_feed || self.live_service)
             && self.settings.ai.hold_pending
             && self.classification(message).is_none()
             && self
@@ -899,7 +907,12 @@ impl App {
                 }
             }
         }
-        if self.live_feed && self.settings.ai.enabled && self.decision_job.is_none() {
+        if (self.live_feed || self.live_service)
+            && !self.shared
+            && self.service_socket.is_none()
+            && self.settings.ai.enabled
+            && self.decision_job.is_none()
+        {
             let job = self
                 .session
                 .messages

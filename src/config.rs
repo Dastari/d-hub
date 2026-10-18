@@ -353,6 +353,30 @@ impl Settings {
             ),
         ]);
         for a in &self.accounts {
+            for (field, value, help) in [
+                (
+                    "enabled",
+                    a.enabled,
+                    "Connect this account in the live service",
+                ),
+                (
+                    "allow_send",
+                    a.allow_send,
+                    "Permit explicit replies from this account",
+                ),
+            ] {
+                rows.push(SettingRow::choice(
+                    format!("accounts.{}.{field}", a.id),
+                    value.to_string(),
+                    help,
+                    &["false", "true"],
+                ));
+            }
+            rows.push(SettingRow::text(
+                format!("accounts.{}.poll_seconds", a.id),
+                a.poll_seconds.to_string(),
+                "Sync interval, 15-3600 seconds",
+            ));
             if a.provider == crate::domain::Provider::Discord {
                 rows.push(SettingRow::choice(
                     format!("accounts.{}.discord_mode", a.id),
@@ -371,7 +395,7 @@ impl Settings {
                 (
                     "username",
                     a.username.clone(),
-                    "iCloud email address or account display identity",
+                    "Full iCloud email address or signed-in Microsoft email/UPN; pins account identity",
                 ),
                 (
                     "tenant",
@@ -514,6 +538,9 @@ impl Settings {
                             .find(|a| a.id == *id)
                             .context("unknown account")?;
                         match *field {
+                            "enabled" => a.enabled = value.parse()?,
+                            "allow_send" => a.allow_send = value.parse()?,
+                            "poll_seconds" => a.poll_seconds = value.parse()?,
                             "username" => a.username = value.into(),
                             "tenant" => a.tenant = value.into(),
                             "client_id" => a.client_id = value.into(),

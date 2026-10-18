@@ -9,7 +9,11 @@ use std::{
     path::Path,
 };
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
+const PROVIDER_SCHEMA:&str="CREATE TABLE profile (id INTEGER PRIMARY KEY CHECK(id=1), live INTEGER NOT NULL);
+    CREATE TABLE remote_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, local_state TEXT NOT NULL DEFAULT '{}', imported INTEGER NOT NULL DEFAULT 0);
+    PRAGMA user_version=2;";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Change {
     pub revision: u64,
@@ -17,10 +21,14 @@ pub struct Change {
 }
 pub struct Database {
     connection: Connection,
+    pub live: bool,
     _owner: DemoStore,
 }
 impl Database {
     pub fn open(directory: &Path, initial: &Settings) -> Result<Self> {
+        Self::open_mode(directory, initial, false)
+    }
+    pub fn open_mode(directory: &Path, initial: &Settings, live: bool) -> Result<Self> {
         initial.validate()?;
         let owner = DemoStore::open(directory.to_owned())?;
         let meta = fs::symlink_metadata(directory)?;
@@ -54,6 +62,11 @@ impl Database {
         if version != 0 && application != 0x44485542 {
             bail!("unrecognised database identity; database preserved");
         }
+        if version == 1 && live {
+            bail!(
+                "existing demo database cannot become a live profile; choose a separate directory"
+            );
+        }
         if version == 0 {
             let tables: u32 = connection.query_row(
                 "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
@@ -64,13 +77,28 @@ impl Database {
                 bail!("unrecognised existing database; no migration applied");
             }
             // Read and validate legacy input BEFORE migration; never replace the JSON backup.
-            let legacy: Session = owner.load()?.unwrap_or_default();
+            let old: Option<Session> = owner.load()?;
+            if live && old.is_some() {
+                bail!("live profiles cannot import demo JSON; choose a separate directory");
+            }
+            let legacy = old.unwrap_or_else(|| {
+                if live {
+                    Session {
+                        messages: vec![],
+                        ..Session::default()
+                    }
+                } else {
+                    Session::default()
+                }
+            });
             let app = crate::app::App::new(legacy, initial.clone())?;
             let tx = connection.transaction()?;
             tx.execute_batch("CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, session TEXT NOT NULL, settings TEXT NOT NULL);
                 CREATE TABLE changes (revision INTEGER PRIMARY KEY, kind TEXT NOT NULL);
                 CREATE TABLE outbox (operation INTEGER PRIMARY KEY, payload TEXT NOT NULL, status TEXT NOT NULL);
                 PRAGMA application_id=0x44485542; PRAGMA user_version=1;")?;
+            tx.execute_batch(PROVIDER_SCHEMA)?;
+            tx.execute("INSERT INTO profile VALUES (1,?1)", [live])?;
             tx.execute(
                 "INSERT INTO state VALUES (1, 1, ?1, ?2)",
                 params![
@@ -82,12 +110,97 @@ impl Database {
             sync_outbox(&tx, &app.session)?;
             tx.commit()?;
         }
+        if version == 1 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(PROVIDER_SCHEMA)?;
+            tx.execute("INSERT INTO profile VALUES (1,0)", [])?;
+            tx.commit()?;
+        }
+        let stored_live: bool =
+            connection.query_row("SELECT live FROM profile WHERE id=1", [], |r| r.get(0))?;
+        if stored_live != live {
+            bail!("profile mode mismatch; live and demo require separate data directories");
+        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         Ok(Self {
             connection,
+            live,
             _owner: owner,
         })
+    }
+    pub fn imported(&self, id: crate::domain::MessageId) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT imported FROM remote_messages WHERE id=?1",
+            [id.0],
+            |r| r.get(0),
+        )?)
+    }
+    pub fn remote_id(
+        &self,
+        record: &crate::providers::Item,
+    ) -> Result<Option<crate::domain::MessageId>> {
+        let id: Option<u64> = self
+            .connection
+            .query_row(
+                "SELECT id FROM remote_messages WHERE identity=?1",
+                [serde_json::to_string(&(
+                    &record.remote,
+                    &record.account_scope,
+                ))?],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(id.map(crate::domain::MessageId))
+    }
+    pub fn store_remote(
+        &mut self,
+        record: &crate::providers::Item,
+    ) -> Result<crate::domain::MessageId> {
+        let key = serde_json::to_string(&(&record.remote, &record.account_scope))?;
+        let mut record = record.clone();
+        if record.partial {
+            let previous: Option<String> = self
+                .connection
+                .query_row(
+                    "SELECT payload FROM remote_messages WHERE identity=?1",
+                    [&key],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(previous) = previous {
+                let mut old: crate::providers::Item = serde_json::from_str(&previous)?;
+                old.unread = record.unread.or(old.unread);
+                record = old;
+            }
+        }
+        self.connection.execute("INSERT INTO remote_messages(identity,payload) VALUES (?1,?2) ON CONFLICT(identity) DO UPDATE SET payload=excluded.payload",
+            params![key,serde_json::to_string(&record)?])?;
+        let id = self.connection.query_row(
+            "SELECT id FROM remote_messages WHERE identity=?1",
+            [key],
+            |r| r.get(0),
+        )?;
+        Ok(crate::domain::MessageId(id))
+    }
+    pub fn local_state(
+        &self,
+        id: crate::domain::MessageId,
+    ) -> Result<crate::read_state::MessageState> {
+        let value: String = self.connection.query_row(
+            "SELECT local_state FROM remote_messages WHERE id=?1",
+            [id.0],
+            |r| r.get(0),
+        )?;
+        Ok(serde_json::from_str(&value)?)
+    }
+    pub fn remote(&self, id: crate::domain::MessageId) -> Result<crate::providers::Item> {
+        let payload: String = self.connection.query_row(
+            "SELECT payload FROM remote_messages WHERE id=?1",
+            [id.0],
+            |r| r.get(0),
+        )?;
+        Ok(serde_json::from_str(&payload)?)
     }
     pub fn load(&self) -> Result<(u64, Session, Settings)> {
         let (revision, session, settings): (u64, String, String) = self.connection.query_row(
@@ -127,6 +240,18 @@ impl Database {
             bail!("stale database revision");
         }
         sync_outbox(&tx, session)?;
+        for message in &session.messages {
+            tx.execute(
+                "UPDATE remote_messages SET imported=1 WHERE id=?1",
+                [message.id.0],
+            )?;
+        }
+        for (id, state) in &session.message_state {
+            tx.execute(
+                "UPDATE remote_messages SET local_state=?1 WHERE id=?2",
+                params![serde_json::to_string(state)?, id.0],
+            )?;
+        }
         tx.execute("INSERT INTO changes VALUES (?1, ?2)", params![next, kind])?;
         tx.execute(
             "DELETE FROM changes WHERE revision < ?1",
@@ -173,7 +298,7 @@ fn sync_outbox(tx: &rusqlite::Transaction<'_>, session: &Session) -> Result<()> 
         }
         SendState::Failed(_) => {
             tx.execute(
-                "UPDATE outbox SET status='failed' WHERE status='submitting'",
+                "UPDATE outbox SET status='failed' WHERE status IN ('submitting','uncertain')",
                 [],
             )?;
         }

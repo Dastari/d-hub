@@ -45,6 +45,7 @@ pub fn into_message(
         return None;
     }
     Some(Message {
+        account_scope: None,
         id,
         timestamp,
         time: format!(

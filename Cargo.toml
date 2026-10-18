@@ -28,6 +28,13 @@ zbus = "5.19"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 nix = { version = "0.31.2", features = ["socket", "user"] }
 
+imap = "2.4.1"
+native-tls = "0.2"
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "native-tls"] }
+mailparse = "0.18.0"
+html2text = "0.17.3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 [profile.release]
 lto = "thin"
 strip = true
