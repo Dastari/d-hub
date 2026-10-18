@@ -195,6 +195,25 @@ impl Message {
             .as_deref()
             .or_else(|| self.target.as_ref().map(|t| t.account.as_str()))
     }
+    pub fn is_mail(&self) -> bool {
+        matches!(
+            self.provider(),
+            Some(Provider::ICloud | Provider::Office365)
+        )
+    }
+    /// Adjacent messages with equal keys stack under one feed heading. Mail groups by sender;
+    /// chats also by conversation, so a group DM never merges with a 1:1.
+    pub fn stack_key(&self) -> (Option<Provider>, Option<&str>, Option<&str>, &str) {
+        let conversation = (!self.is_mail())
+            .then(|| self.target.as_ref().map(|t| t.conversation.as_str()))
+            .flatten();
+        (
+            self.provider(),
+            self.account(),
+            conversation,
+            self.sender.as_str(),
+        )
+    }
     pub fn matches_source(&self, source: SourceFilter) -> bool {
         source.matches(self.provider())
     }

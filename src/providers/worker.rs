@@ -138,7 +138,7 @@ impl Workers {
                 || !w.dead
                     && accounts
                         .iter()
-                        .any(|a| a.id == *id && a.enabled && *a == w.account)
+                        .any(|a| a.id == *id && a.enabled && a.same_connection(&w.account))
         });
         let mut started_send = false;
         for account in accounts.iter().filter(|a| a.enabled) {

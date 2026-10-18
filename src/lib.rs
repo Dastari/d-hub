@@ -23,3 +23,5 @@ pub mod discord_auth;
 pub mod startup;
 
 pub mod update;
+
+pub mod when;

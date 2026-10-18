@@ -363,6 +363,11 @@ impl Settings {
             ),
         ]);
         for a in &self.accounts {
+            rows.push(SettingRow::text(
+                format!("accounts.{}.name", a.id),
+                &a.name,
+                "Display name in the feed and composer; the account ID stays fixed",
+            ));
             for (field, value, help) in [
                 (
                     "enabled",
@@ -391,7 +396,7 @@ impl Settings {
                 rows.push(SettingRow::choice(
                     format!("accounts.{}.discord_mode", a.id),
                     &a.discord_mode,
-                    "Personal QR sign-in, optional notification bridge, or bot; DM transport pending",
+                    "personal: QR sign-in for DMs and replies; notifications: read-only desktop bridge; bot: separate token",
                     &["notifications", "personal", "bot"],
                 ));
                 rows.push(SettingRow::text(
@@ -554,6 +559,7 @@ impl Settings {
                             .find(|a| a.id == *id)
                             .context("unknown account")?;
                         match *field {
+                            "name" => a.name = value.trim().into(),
                             "enabled" => a.enabled = value.parse()?,
                             "allow_send" => a.allow_send = value.parse()?,
                             "poll_seconds" => a.poll_seconds = value.parse()?,
@@ -602,9 +608,58 @@ impl Settings {
         Ok(())
     }
     pub fn add_account(&mut self, id: &str, provider: crate::domain::Provider) -> Result<()> {
+        self.add_named_account(id, provider, "")
+    }
+    pub fn add_named_account(
+        &mut self,
+        id: &str,
+        provider: crate::domain::Provider,
+        name: &str,
+    ) -> Result<()> {
+        if self.accounts.iter().any(|a| a.id == id) {
+            bail!("account {id} already exists; choose another ID");
+        }
+        let mut account = AccountConfig::new(id, provider);
+        account.name = name.trim().into();
         let mut accounts = self.accounts.clone();
-        accounts.push(AccountConfig::new(id, provider));
+        accounts.push(account);
         self.set("accounts", &serde_json::to_string(&accounts)?)
+    }
+    /// First free ID for another account of the same provider: discord, discord-2, …
+    pub fn suggest_account_id(&self, provider: crate::domain::Provider) -> String {
+        let base = provider_value(provider);
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.to_owned()
+                } else {
+                    format!("{base}-{n}")
+                }
+            })
+            .find(|id| !self.accounts.iter().any(|a| &a.id == id))
+            .expect("unbounded suffixes")
+    }
+    pub fn remove_account(&mut self, id: &str) -> Result<AccountConfig> {
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .cloned()
+            .with_context(|| format!("unknown account {id}"))?;
+        let mut next = self.clone();
+        next.accounts.retain(|a| a.id != id);
+        next.validate()?;
+        *self = next;
+        Ok(account)
+    }
+}
+
+pub fn provider_value(provider: crate::domain::Provider) -> &'static str {
+    match provider {
+        crate::domain::Provider::ICloud => "icloud",
+        crate::domain::Provider::Office365 => "office365",
+        crate::domain::Provider::Teams => "teams",
+        crate::domain::Provider::Discord => "discord",
     }
 }
 

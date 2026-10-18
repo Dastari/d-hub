@@ -191,9 +191,18 @@ enum ServiceAction {
 #[derive(Subcommand)]
 enum AccountAction {
     List,
+    /// Add another account; ID defaults to the first free provider ID (discord, discord-2, …)
     Add {
         provider: String,
+        id: Option<String>,
+        /// Display name shown in the feed, composer and settings
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Change an account's display name; its ID, sign-in and drafts are unchanged
+    Rename {
         id: String,
+        name: String,
     },
     Remove {
         id: String,
@@ -461,7 +470,12 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             app.mode = d_hub::app::Mode::Settings;
             app.live_setup = true;
-            app.notice = "Account metadata and prompts are editable here. :account add PROVIDER ID · :auth ID or :auth ai. Enable an account in a separate live service profile to connect.".into();
+            if app.settings.accounts.is_empty() {
+                app.settings_page =
+                    d_hub::app::SettingsPage::Section(d_hub::app::SettingsSection::Accounts);
+                app.settings_entry = app.settings_page.clone();
+            }
+            app.notice = "Accounts, profiles and preferences are editable here. Connections run in the live service.".into();
             tui::run(app, None, Some(&path), false)?;
         }
         Command::Notifications { data_dir } => {
@@ -522,11 +536,18 @@ fn run(cli: Cli) -> Result<()> {
             let (mut settings, path, mut service) = settings_location(cli.config, socket)?;
             match action {
                 AccountAction::List => {
-                    let rows: Vec<_> = settings.accounts.iter().map(|a| serde_json::json!({"id":a.id,"provider":a.provider,"authentication":a.auth_description(),"allow_ai":a.allow_ai,"enabled":a.enabled,"allow_send":a.allow_send})).collect();
+                    let rows: Vec<_> = settings.accounts.iter().map(|a| serde_json::json!({"id":a.id,"name":a.label(),"provider":a.provider,"authentication":a.auth_description(),"allow_ai":a.allow_ai,"enabled":a.enabled,"allow_send":a.allow_send})).collect();
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
-                AccountAction::Add { provider, id } => {
-                    settings.add_account(&id, tui::parse_provider(&provider)?)?;
+                AccountAction::Add { provider, id, name } => {
+                    let provider = tui::parse_provider(&provider)?;
+                    let id = id.unwrap_or_else(|| settings.suggest_account_id(provider));
+                    settings.add_named_account(&id, provider, name.as_deref().unwrap_or(""))?;
+                    persist_settings(&settings, &path, &mut service)?;
+                    eprintln!("Added account {id}. Next: d-hub account auth {id}");
+                }
+                AccountAction::Rename { id, name } => {
+                    settings.set(&format!("accounts.{id}.name"), &name)?;
                     persist_settings(&settings, &path, &mut service)?;
                 }
                 AccountAction::Remove { id } => {
@@ -750,7 +771,10 @@ fn run(cli: Cli) -> Result<()> {
             .into();
             if app.live_service && app.settings.accounts.is_empty() {
                 app.mode = d_hub::app::Mode::Settings;
-                app.notice="Welcome to d-hub · :account add discord personal, then :auth personal for QR sign-in. iCloud/Office365/Teams setup is also available.".into();
+                app.settings_page =
+                    d_hub::app::SettingsPage::Section(d_hub::app::SettingsSection::Accounts);
+                app.settings_entry = app.settings_page.clone();
+                app.notice="Welcome to d-hub · Enter on + Add account to choose Discord, iCloud, Office 365 or Teams, then Sign in.".into();
             }
             let link = d_hub::ipc::Link::new(client, socket, None);
             app.service_socket = Some(link.socket.clone());

@@ -236,3 +236,50 @@ fn a_second_notification_window_cannot_start_another_capture_owner() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("single notification capture owner"));
     assert!(!dir.path().join("different-profile").exists());
 }
+
+#[test]
+fn several_accounts_of_one_provider_get_free_ids_and_rename_without_identity_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    for args in [
+        vec!["account", "add", "discord", "--name", "Son"],
+        vec!["account", "add", "discord"],
+        vec!["account", "rename", "discord-2", "Gaming friends"],
+        vec!["config", "set", "accounts.discord.name", "Family"],
+    ] {
+        let output = run(&path, &args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let settings = Settings::load(&path).unwrap();
+    let accounts: Vec<_> = settings
+        .accounts
+        .iter()
+        .map(|a| (a.id.as_str(), a.label(), a.enabled, a.allow_send))
+        .collect();
+    assert_eq!(
+        accounts,
+        [
+            ("discord", "Family", false, false),
+            ("discord-2", "Gaming friends", false, false)
+        ]
+    );
+    let original = std::fs::read(&path).unwrap();
+    assert!(
+        !run(&path, &["account", "add", "discord", "discord"])
+            .status
+            .success()
+    );
+    assert!(
+        !run(&path, &["account", "rename", "missing", "Name"])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let listed = run(&path, &["account", "list"]);
+    let json: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(json[1]["name"], "Gaming friends");
+}

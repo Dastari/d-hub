@@ -100,6 +100,9 @@ pub struct AccountConfig {
     #[serde(default = "default_poll_seconds")]
     pub poll_seconds: u64,
     pub id: String,
+    /// Display label only; the ID remains the stable key for credentials, drafts and cursors.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     pub provider: Provider,
     #[serde(default)]
     pub username: String,
@@ -138,6 +141,7 @@ impl AccountConfig {
     pub fn new(id: &str, provider: Provider) -> Self {
         Self {
             id: id.into(),
+            name: String::new(),
             provider,
             enabled: false,
             allow_send: false,
@@ -152,6 +156,21 @@ impl AccountConfig {
             notification_sender: String::new(),
             notification_app: discord_app(),
         }
+    }
+    pub fn label(&self) -> &str {
+        if self.name.trim().is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
+    /// Connection equality ignores the display label so renaming never restarts a worker.
+    pub fn same_connection(&self, other: &Self) -> bool {
+        let unnamed = |account: &Self| Self {
+            name: String::new(),
+            ..account.clone()
+        };
+        unnamed(self) == unnamed(other)
     }
     pub fn credential_ref(&self) -> String {
         if self.provider == Provider::Discord && self.discord_mode == "personal" {
@@ -225,6 +244,9 @@ pub fn validate(
         }
         if !identifier(&account.id) || !ids.insert(&account.id) {
             bail!("account IDs must be unique simple identifiers");
+        }
+        if account.name.len() > 80 || account.name.chars().any(char::is_control) {
+            bail!("account display names need at most 80 bytes on one line");
         }
         if account.username.len() > 320
             || account.client_id.len() > 128
@@ -301,9 +323,17 @@ pub fn fingerprint(message: &Message, settings: &crate::config::Settings) -> Str
         &message.target,
         message.provider(),
         message.account(),
-        settings.accounts.iter().find(|a| {
-            Some(a.id.as_str()) == message.account() && Some(a.provider) == message.provider()
-        }),
+        settings
+            .accounts
+            .iter()
+            .find(|a| {
+                Some(a.id.as_str()) == message.account() && Some(a.provider) == message.provider()
+            })
+            // Renaming an account must not discard its existing decisions.
+            .map(|a| AccountConfig {
+                name: String::new(),
+                ..a.clone()
+            }),
         &settings.profiles,
         &settings.ai,
         &settings.spam,

@@ -50,7 +50,11 @@ impl Item {
             id,
             timestamp: self.timestamp,
             time: chrono::DateTime::from_timestamp(self.timestamp as i64, 0)
-                .map(|t| t.format("%m-%d %H:%M").to_string())
+                .map(|t| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M")
+                        .to_string()
+                })
                 .unwrap_or_default(),
             sender: safe_text(&self.sender),
             subject: safe_text(&self.subject),

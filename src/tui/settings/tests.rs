@@ -1,0 +1,413 @@
+use super::*;
+use crate::{app::Session, composer::Submission};
+use ratatui::{Terminal, backend::TestBackend};
+use unicode_width::UnicodeWidthStr;
+
+fn press(app: &mut App, code: KeyCode) {
+    super::super::key(
+        app,
+        KeyEvent::new(code, KeyModifiers::NONE),
+        4,
+        &mut None,
+        &mut None,
+        None,
+    );
+}
+
+fn settings_app() -> App {
+    let mut app = App::new(Session::default(), Settings::default()).unwrap();
+    app.editor
+        .insert("Draft stays with its original recipient 東京");
+    app.update_body();
+    app.mode = Mode::Settings;
+    app
+}
+
+fn select(app: &mut App, item: &Item) {
+    app.setting_index = items(app)
+        .iter()
+        .position(|i| i == item)
+        .unwrap_or_else(|| panic!("{item:?} missing from {:?}", app.settings_page));
+}
+
+fn edit(app: &mut App, value: &str) {
+    assert_eq!(app.mode, Mode::EditSetting);
+    app.command = Editor::new(value);
+    press(app, KeyCode::Enter);
+}
+
+#[test]
+fn overview_separates_global_sections_from_accounts_and_navigation_keeps_drafts() {
+    let mut app = settings_app();
+    let before = serde_json::to_vec(&app.session).unwrap();
+    let overview = super::super::snapshot(&mut app, 110, 34).unwrap();
+    for section in SettingsSection::ALL {
+        assert!(overview.contains(section.label()));
+    }
+    assert!(!overview.contains("accounts."), "no raw account keys");
+    select(
+        &mut app,
+        &Item::Open(SettingsPage::Section(SettingsSection::General)),
+    );
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::General)
+    );
+    assert!(
+        items(&app)
+            .iter()
+            .all(|i| matches!(i, Item::Field(name) if !name.contains('.')))
+    );
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Feed)
+    );
+    press(&mut app, KeyCode::BackTab);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.settings_page, SettingsPage::Home);
+    assert_eq!(
+        items(&app)[app.setting_index],
+        Item::Open(SettingsPage::Section(SettingsSection::General))
+    );
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode, Mode::Navigate);
+
+    // Settings opened at a page from the drawer close from that page with one Esc.
+    app.command_origin = Mode::Navigate;
+    super::super::run_command(&mut app, ":accounts");
+    assert_eq!(app.mode, Mode::Settings);
+    select(&mut app, &Item::Action(Action::AddAccount));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Accounts)
+    );
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode, Mode::Navigate);
+    assert_eq!(serde_json::to_vec(&app.session).unwrap(), before);
+}
+
+#[test]
+fn add_account_form_creates_several_accounts_of_one_provider_without_connecting() {
+    let mut app = settings_app();
+    open(&mut app, SettingsPage::Section(SettingsSection::Accounts));
+    select(&mut app, &Item::Action(Action::AddAccount));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.settings_page, SettingsPage::AddAccount);
+    assert_eq!(app.new_account.id, "discord");
+    select(&mut app, &Item::New(NewField::Name));
+    press(&mut app, KeyCode::Enter);
+    edit(&mut app, "  Son 👦  ");
+    assert!(
+        app.settings.accounts.is_empty(),
+        "nothing saved before Create"
+    );
+    select(&mut app, &Item::Action(Action::CreateAccount));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.settings_page, SettingsPage::Account("discord".into()));
+    assert_eq!(
+        items(&app)[app.setting_index],
+        Item::Action(Action::SignIn("discord".into()))
+    );
+    let created = &app.settings.accounts[0];
+    assert_eq!(
+        (created.label(), created.enabled, created.allow_send),
+        ("Son 👦", false, false)
+    );
+
+    // The second account of a provider gets the next free ID; typed IDs survive provider changes.
+    press(&mut app, KeyCode::Esc);
+    select(&mut app, &Item::Action(Action::AddAccount));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.new_account.id, "discord-2");
+    press(&mut app, KeyCode::Right);
+    assert_eq!(
+        (app.new_account.provider, app.new_account.id.as_str()),
+        (Provider::ICloud, "icloud")
+    );
+    press(&mut app, KeyCode::Left);
+    assert_eq!(app.new_account.id, "discord-2");
+    select(&mut app, &Item::New(NewField::Id));
+    press(&mut app, KeyCode::Enter);
+    edit(&mut app, "discord");
+    assert_eq!(app.mode, Mode::EditSetting, "duplicate IDs are rejected");
+    assert!(app.notice.contains("already exists"));
+    edit(&mut app, "kids");
+    select(&mut app, &Item::New(NewField::Provider));
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Left);
+    assert_eq!(app.new_account.id, "kids");
+    select(&mut app, &Item::Action(Action::CreateAccount));
+    press(&mut app, KeyCode::Enter);
+    let ids: Vec<_> = app
+        .settings
+        .accounts
+        .iter()
+        .map(|a| a.id.as_str())
+        .collect();
+    assert_eq!(ids, ["discord", "kids"]);
+    assert!(
+        app.settings
+            .accounts
+            .iter()
+            .all(|a| a.provider == Provider::Discord && !a.enabled)
+    );
+
+    // Display names distinguish accounts of one provider in the feed.
+    for message in &mut app.session.messages {
+        message.provider = Some(Provider::Discord);
+        message.account = Some("discord".into());
+    }
+    app.mode = Mode::Navigate;
+    let feed = super::super::snapshot(&mut app, 100, 40).unwrap();
+    assert!(feed.contains("Discord · Son 👦"), "{feed}");
+}
+
+#[test]
+fn renaming_keeps_connection_identity_scope_and_ai_decisions() {
+    let mut settings = Settings::default();
+    settings.add_account("home", Provider::ICloud).unwrap();
+    settings.accounts[0].username = "fictional@example.invalid".into();
+    let before = settings.clone();
+    settings.set("accounts.home.name", "Home mail").unwrap();
+    let (old, new) = (&before.accounts[0], &settings.accounts[0]);
+    assert!(old.same_connection(new) && old != new);
+    assert_eq!(crate::providers::scope(old), crate::providers::scope(new));
+    let mut message = crate::fixtures::messages().remove(0);
+    message.account = Some("home".into());
+    message.provider = Some(Provider::ICloud);
+    assert_eq!(
+        crate::policy::fingerprint(&message, &before),
+        crate::policy::fingerprint(&message, &settings)
+    );
+    for invalid in ["two\nlines", &"x".repeat(81)] {
+        assert!(settings.set("accounts.home.name", invalid).is_err());
+    }
+    settings.set("accounts.home.name", "").unwrap();
+    assert_eq!(settings.accounts[0].label(), "home");
+    let stored = serde_json::to_value(&settings.accounts[0]).unwrap();
+    assert!(
+        stored.get("name").is_none(),
+        "empty names stay out of configs read by older releases"
+    );
+}
+
+#[test]
+fn account_actions_connect_disconnect_and_remove_only_after_confirmation() {
+    let mut app = settings_app();
+    let draft = app.session.composer.draft.clone();
+    app.settings
+        .add_account("personal", Provider::Discord)
+        .unwrap();
+    let page = SettingsPage::Account("personal".into());
+    open(&mut app, page.clone());
+    // Arrows never run account actions: Left on an action goes back instead.
+    select(&mut app, &Item::Action(Action::Connect("personal".into())));
+    press(&mut app, KeyCode::Left);
+    assert!(!app.settings.accounts[0].enabled);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Accounts)
+    );
+    press(&mut app, KeyCode::Enter);
+    select(&mut app, &Item::Action(Action::Connect("personal".into())));
+    press(&mut app, KeyCode::Enter);
+    assert!(app.settings.accounts[0].enabled);
+    assert!(app.notice.contains("sign in"), "{}", app.notice);
+    assert_eq!(
+        items(&app)[app.setting_index],
+        Item::Action(Action::Disconnect("personal".into()))
+    );
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.settings.accounts[0].enabled);
+    select(
+        &mut app,
+        &Item::Field("accounts.personal.allow_send".into()),
+    );
+    press(&mut app, KeyCode::Right);
+    assert!(app.settings.accounts[0].allow_send);
+    press(&mut app, KeyCode::Left);
+    assert!(!app.settings.accounts[0].allow_send);
+
+    select(
+        &mut app,
+        &Item::Action(Action::AskRemove("personal".into())),
+    );
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::RemoveAccount("personal".into())
+    );
+    assert!(
+        super::super::snapshot(&mut app, 60, 30)
+            .unwrap()
+            .contains("Remove personal?")
+    );
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.settings_page, page);
+    press(&mut app, KeyCode::Enter);
+    select(&mut app, &Item::Action(Action::Back));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.settings.accounts.len(), 1);
+
+    // A pending or uncertain send from the account blocks removal.
+    let mut busy = draft.clone().expect("draft");
+    busy.target.account = "personal".into();
+    app.session.composer.send = SendState::Uncertain(Submission {
+        operation: 7,
+        draft: busy,
+    });
+    open(&mut app, SettingsPage::RemoveAccount("personal".into()));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.settings.accounts.len(), 1);
+    assert!(app.notice.contains("uncertain"));
+    app.session.composer.send = SendState::Ready;
+    press(&mut app, KeyCode::Enter);
+    assert!(app.settings.accounts.is_empty());
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Accounts)
+    );
+    assert!(app.notice.starts_with("Removed personal"));
+    assert_eq!(app.session.composer.draft, draft);
+}
+
+#[test]
+fn pages_fill_tall_windows_and_keep_the_selected_row_visible_when_resized() {
+    let mut app = settings_app();
+    app.settings
+        .add_account("work-chat", Provider::Teams)
+        .unwrap();
+    let before = serde_json::to_vec(&app.session).unwrap();
+    for page in [
+        SettingsPage::Home,
+        SettingsPage::Section(SettingsSection::Feed),
+        SettingsPage::Account("work-chat".into()),
+        SettingsPage::AddAccount,
+    ] {
+        open(&mut app, page);
+        for index in 0..items(&app).len() {
+            app.setting_index = index;
+            for (width, height) in [(28, 20), (40, 65), (120, 45), (28, 16)] {
+                let output = super::super::snapshot(&mut app, width, height).unwrap();
+                assert!(output.contains('›'), "selection hidden at {width}x{height}");
+                assert_eq!(output.lines().count(), height as usize);
+            }
+        }
+    }
+    open(&mut app, SettingsPage::Account("work-chat".into()));
+    let tall = super::super::snapshot(&mut app, 40, 65).unwrap();
+    assert!(
+        tall.contains("Remove account"),
+        "tall windows show the whole page"
+    );
+    assert!(!tall.contains("Discord mode"), "only Teams fields appear");
+    assert!(app.settings_page_size > 6);
+    assert_eq!(serde_json::to_vec(&app.session).unwrap(), before);
+}
+
+#[test]
+fn wide_navigation_is_clickable_and_second_click_follows_links() {
+    let mut app = settings_app();
+    let mut terminal = Terminal::new(TestBackend::new(110, 34)).unwrap();
+    let mut hits = HitAreas::default();
+    terminal
+        .draw(|frame| hits = super::super::draw(frame, &mut app, Duration::ZERO))
+        .unwrap();
+    let (_, page) = hits
+        .settings_nav
+        .iter()
+        .find(|(_, page)| *page == SettingsPage::Section(SettingsSection::Spam))
+        .expect("spam navigation entry");
+    open(&mut app, page.clone());
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Spam)
+    );
+    terminal
+        .draw(|frame| hits = super::super::draw(frame, &mut app, Duration::ZERO))
+        .unwrap();
+    assert!(!hits.settings_nav.is_empty());
+    let mut narrow = Terminal::new(TestBackend::new(40, 34)).unwrap();
+    narrow
+        .draw(|frame| hits = super::super::draw(frame, &mut app, Duration::ZERO))
+        .unwrap();
+    assert!(hits.settings_nav.is_empty());
+    open(&mut app, SettingsPage::Home);
+    click(&mut app, 2);
+    assert_eq!(app.settings_page, SettingsPage::Home);
+    click(&mut app, 2);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Feed)
+    );
+}
+
+#[test]
+fn titles_labels_values_and_notes_have_distinct_styles_in_both_themes() {
+    for theme in [Theme::Midnight, Theme::Dusk] {
+        let mut app = App::new(
+            Session::default(),
+            Settings {
+                theme,
+                reduced_motion: true,
+                ..Settings::default()
+            },
+        )
+        .unwrap();
+        app.mode = Mode::Settings;
+        open(&mut app, SettingsPage::Section(SettingsSection::General));
+        let p = palette(theme, Duration::ZERO, true);
+        let mut terminal = Terminal::new(TestBackend::new(110, 42)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, frame.area(), p, &mut app);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        // Columns count cells, so multi-byte symbols such as › do not shift positions.
+        let find = |needle: &str| {
+            for y in 0..42 {
+                let cells: Vec<&str> = (0..110).map(|x| buffer[(x, y)].symbol()).collect();
+                for x in 0..cells.len() {
+                    if cells[x..].concat().starts_with(needle) {
+                        return (x as u16, y);
+                    }
+                }
+            }
+            panic!("missing {needle}");
+        };
+        let colors = ["› General", "Automatic updates", "true", "Install stable"].map(|needle| {
+            let (x, y) = find(needle);
+            let x = if needle.starts_with('›') { x + 2 } else { x };
+            buffer[(x, y)].fg
+        });
+        for i in 0..colors.len() {
+            for j in i + 1..colors.len() {
+                assert_ne!(colors[i], colors[j]);
+            }
+        }
+        let (_, row) = find("Automatic updates");
+        assert_eq!(buffer[(108, row)].bg, p.selected);
+    }
+}
+
+#[test]
+fn wrapping_preserves_unicode_clusters_and_limits_long_value_previews() {
+    let value = "東京 👩🏽‍💻 e\u{301} a_very_long_unbroken_setting_name";
+    for width in [4, 9, 24, 80] {
+        let lines = wrapped(value, width);
+        assert!(lines.iter().all(|line| line.width() <= width));
+        assert_eq!(
+            lines.join(" ").split_whitespace().collect::<String>(),
+            value.split_whitespace().collect::<String>()
+        );
+    }
+    let summary = preview(&"東京👩🏽‍💻".repeat(1000), 24);
+    assert!(summary.width() <= 24 && summary.ends_with('…'));
+    assert_eq!(preview("", 24), "Not set");
+    assert_eq!(preview("hello\nworld", 24), "hello ↵");
+}

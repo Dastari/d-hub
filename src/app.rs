@@ -10,6 +10,9 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod settings_page;
+pub use settings_page::{NewAccount, SettingsPage, SettingsSection};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     #[serde(default)]
@@ -93,9 +96,15 @@ pub struct App {
     pub notice: String,
     pub new_items: usize,
     pub feed_offset: usize,
+    /// Selection the feed last scrolled into view; wheel scrolling leaves it alone.
+    pub feed_revealed: Option<MessageId>,
     pub setting_index: usize,
     pub settings_scroll: usize,
     pub settings_page_size: usize,
+    pub settings_page: SettingsPage,
+    /// Page settings were opened at; Esc there returns to the drawer.
+    pub settings_entry: SettingsPage,
+    pub new_account: NewAccount,
     pub next_outcome: MockOutcome,
     pub reader: Option<Message>,
     pub reader_scroll: u16,
@@ -169,9 +178,13 @@ impl App {
             notice: "Offline demo · every send is simulated.  Esc then ? for controls.".into(),
             new_items: 0,
             feed_offset: 0,
+            feed_revealed: None,
             setting_index: 0,
             settings_scroll: 0,
             settings_page_size: 1,
+            settings_page: SettingsPage::Home,
+            settings_entry: SettingsPage::Home,
+            new_account: NewAccount::default(),
             next_outcome: MockOutcome::Success,
             reader: None,
             reader_scroll: 0,
@@ -306,9 +319,7 @@ impl App {
         }
         self.session.composer.apply(Event::Select(target));
         self.sync_editor();
-        if self.settings.mark_read_on_select {
-            self.set_unread(id, false);
-        }
+        self.mark_seen(id);
     }
 
     pub fn move_selection(&mut self, delta: isize, rows: usize) {
@@ -513,9 +524,7 @@ impl App {
             .and_then(|t| self.session.saved.remove(&t.draft_key()));
         self.session.composer.send = SendState::Ready;
         self.selected = Some(id);
-        if self.settings.mark_read_on_select {
-            self.set_unread(id, false);
-        }
+        self.mark_seen(id);
         self.sync_editor();
         self.mode = Mode::Insert;
         self.notice = if target.is_some() { "Reply ready · previous message’s draft saved · arrows switch messages/sources, Alt+arrows edit text." } else { "Previous reply saved · this item has no reply capability." }.into();
@@ -569,10 +578,8 @@ impl App {
     }
 
     pub fn open_reader(&mut self) {
-        if self.settings.mark_read_on_select
-            && let Some(id) = self.selected
-        {
-            self.set_unread(id, false);
+        if let Some(id) = self.selected {
+            self.mark_seen(id);
         }
         self.reader = self.selected_message().cloned();
         self.reader_scroll = 0;
@@ -641,22 +648,117 @@ impl App {
             && !self.hold_pending(message)
     }
 
-    pub fn toggle_dismissed(&mut self) {
-        if let Some(id) = self.selected {
-            self.record(crate::service::Action::Dismiss {
-                id,
-                dismissed: !self.dismissed(id),
-            });
-            let state = self.session.message_state.entry(id).or_default();
-            state.dismissed = !state.dismissed;
-            self.notice = if state.dismissed {
-                "Dismissed locally · D includes dismissed items; e restores one."
-            } else {
-                "Restored to the feed."
-            }
-            .into();
-            self.reconcile_filters();
+    /// The run of adjacent visible messages sharing `id`'s feed heading, newest first.
+    pub fn stack(&self, id: MessageId) -> Vec<&Message> {
+        let visible = self.visible();
+        let Some(index) = visible.iter().position(|m| m.id == id) else {
+            return self
+                .session
+                .messages
+                .iter()
+                .filter(|m| m.id == id)
+                .collect();
+        };
+        let key = visible[index].stack_key();
+        let start = visible[..index]
+            .iter()
+            .rposition(|m| m.stack_key() != key)
+            .map_or(0, |i| i + 1);
+        let end = visible[index..]
+            .iter()
+            .position(|m| m.stack_key() != key)
+            .map_or(visible.len(), |i| index + i);
+        visible[start..end].to_vec()
+    }
+
+    /// What is read and dismissed as one: a chat stack, or a single email.
+    pub fn burst(&self, id: MessageId) -> Vec<&Message> {
+        let stack = self.stack(id);
+        if stack.iter().any(|m| m.is_mail()) {
+            stack.into_iter().filter(|m| m.id == id).collect()
+        } else {
+            stack
         }
+    }
+
+    /// Viewing a message shows its whole chat stack, so selection marks the stack read.
+    pub fn mark_seen(&mut self, id: MessageId) {
+        if !self.settings.mark_read_on_select {
+            return;
+        }
+        let unread: Vec<_> = self
+            .burst(id)
+            .iter()
+            .filter(|m| m.unread || m.id == id)
+            .map(|m| m.id)
+            .collect();
+        for id in unread {
+            self.set_unread(id, false);
+        }
+    }
+
+    /// Dismisses the selection without replying (a whole chat burst, or one email) and moves to
+    /// the next message. Restores instead when the selection is already dismissed.
+    pub fn toggle_dismissed(&mut self) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        let dismissed = !self.dismissed(id);
+        let burst = self.burst(id);
+        let sender = burst
+            .first()
+            .map(|m| crate::domain::safe_text(&m.sender))
+            .unwrap_or_default();
+        let ids: Vec<_> = burst
+            .iter()
+            .map(|m| m.id)
+            .filter(|id| self.dismissed(*id) != dismissed)
+            .collect();
+        if dismissed
+            && let Some(draft) = &self.session.composer.draft
+            && ids.contains(&draft.target.incoming)
+        {
+            self.notice =
+                "Reply in progress · send it, or Esc then d to discard it, before dismissing."
+                    .into();
+            return;
+        }
+        // Continue below the burst (older), else above it, so reading stays in place.
+        let next = (dismissed && !self.settings.show_dismissed)
+            .then(|| {
+                let visible = self.visible();
+                let index = visible.iter().position(|m| m.id == id)?;
+                visible[index..]
+                    .iter()
+                    .chain(visible[..index].iter().rev())
+                    .find(|m| !ids.contains(&m.id))
+                    .map(|m| m.id)
+            })
+            .flatten();
+        for &id in &ids {
+            self.record(crate::service::Action::Dismiss { id, dismissed });
+            self.session.message_state.entry(id).or_default().dismissed = dismissed;
+        }
+        self.reconcile_filters();
+        if let Some(next) = next {
+            if self.settings.reply_first
+                && self.mode == Mode::Insert
+                && self.session.composer.draft.is_none()
+            {
+                self.switch_reply(next);
+            } else {
+                self.select(next);
+            }
+        }
+        let what = match ids.len() {
+            1 => format!("message from {sender}"),
+            n => format!("{n} messages from {sender}"),
+        };
+        self.notice = if dismissed {
+            format!("Dismissed {what} · D or :dismissed shows dismissed items.")
+        } else {
+            format!("Restored {what}.")
+        };
     }
 
     pub fn toggle_show_dismissed(&mut self) {
@@ -681,9 +783,19 @@ impl App {
             && let Some(sent) = self.session.composer.sent.last()
         {
             let id = sent.draft.target.incoming;
-            self.set_unread(id, false);
-            if self.settings.dismiss_after_reply {
-                self.session.message_state.entry(id).or_default().dismissed = true;
+            // The reply answers its message and the older ones stacked with it; anything newer
+            // that arrived meanwhile stays unread and in the feed.
+            let answered: Vec<_> = self
+                .burst(id)
+                .iter()
+                .map(|m| m.id)
+                .skip_while(|m| *m != id)
+                .collect();
+            for &id in &answered {
+                self.set_unread(id, false);
+                if self.settings.dismiss_after_reply {
+                    self.session.message_state.entry(id).or_default().dismissed = true;
+                }
             }
             self.reconcile_filters();
         }

@@ -90,9 +90,7 @@ pub fn apply(app: &mut App, action: &Action) -> Result<Option<Submission>> {
                 app.select(*id);
             } else {
                 app.selected = Some(*id);
-                if app.settings.mark_read_on_select {
-                    app.set_unread(*id, false);
-                }
+                app.mark_seen(*id);
             }
         }
         Action::Focus { focused } => app.focus(*focused),
@@ -405,7 +403,13 @@ impl Owner {
                     staged
                         .provider_status
                         .insert(account.id.clone(), "Disabled".into());
-                } else if !self.app.settings.accounts.iter().any(|a| a == account) {
+                } else if !self
+                    .app
+                    .settings
+                    .accounts
+                    .iter()
+                    .any(|a| a.same_connection(account))
+                {
                     staged.provider_status.insert(
                         account.id.clone(),
                         "Connecting with updated settings".into(),
@@ -424,16 +428,10 @@ impl Owner {
             .iter()
             .find(|m| m.id == id)
             .context("unknown message")?;
-        if self.app.settings.mark_read_on_select
-            && self
-                .app
-                .session
-                .messages
-                .iter()
-                .any(|m| m.id == id && m.unread)
-        {
+        // The reader shows the whole chat stack, so the stack is marked read with it.
+        if self.app.settings.mark_read_on_select && self.app.burst(id).iter().any(|m| m.unread) {
             let mut staged = App::connected(self.app.session.clone(), self.app.settings.clone())?;
-            staged.set_unread(id, false);
+            staged.mark_seen(id);
             self.revision = self.database.commit(
                 self.revision,
                 &staged.session,
@@ -602,7 +600,7 @@ impl Owner {
                 .settings
                 .accounts
                 .iter()
-                .any(|a| *a == result.account && a.enabled);
+                .any(|a| a.same_connection(&result.account) && a.enabled);
             match result.outcome {
                 Outcome::Send(operation, outcome) => {
                     if matches!(&self.app.session.composer.send,SendState::Submitting(op) if op.operation==operation)

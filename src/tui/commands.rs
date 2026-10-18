@@ -30,6 +30,7 @@ fn candidates(app: &App) -> Vec<String> {
         "auth ai",
         "profile add ",
         "spam prompt",
+        "accounts",
         "connections",
         "settings",
         "update",
@@ -68,6 +69,8 @@ fn candidates(app: &App) -> Vec<String> {
         result.push(format!("auth {}", account.id));
         result.push(format!("account enable {}", account.id));
         result.push(format!("account disable {}", account.id));
+        result.push(format!("account rename {} ", account.id));
+        result.push(format!("account remove {}", account.id));
     }
     for profile in &app.settings.profiles {
         for action in ["focus", "profile prompt", "profile remove"] {
@@ -131,7 +134,7 @@ pub(super) fn paste(app: &mut App, value: &str) {
 
 fn hint(value: &str) -> &'static str {
     if input(value).starts_with("account") {
-        "account add PROVIDER ID · account enable ID / disable ID · auth ID signs in"
+        "account add [PROVIDER [ID]] · rename ID NAME · remove ID · enable/disable ID · auth ID signs in"
     } else if input(value).starts_with("auth") {
         "auth ACCOUNT · use an existing account ID; auth ai configures the decision provider"
     } else if input(value).starts_with("profile") {
@@ -194,6 +197,155 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut App) {
     );
 }
 
+pub(super) fn run_command(app: &mut App, command: &str) -> bool {
+    app.mode = app.command_origin;
+    let words: Vec<_> = commands::input(command).split_whitespace().collect();
+    match words.as_slice() {
+        ["update"] if app.shared && app.live_service => {
+            app.update_requested = true;
+            app.notice = "Checking production releases…".into();
+        }
+        ["update"] => {
+            app.notice = "Production updates require the live service; demo stays offline.".into()
+        }
+        ["attach"] if !app.live_feed && !app.live_setup && !app.live_service => app.attach(),
+        ["remove"] => remove_last(app),
+        ["incoming"] if !app.live_feed && !app.live_setup && !app.live_service => app.arrive(),
+        ["follow"] => {
+            app.focus(false);
+            app.focus(true);
+            app.new_items = 0;
+            app.sync_editor();
+        }
+        ["save-switch"] => app.save_switch(),
+        ["discard"] => app.mode = Mode::Discard,
+        ["fail"] if !app.live_service => {
+            app.next_outcome = MockOutcome::Failure;
+            app.notice = "Next mock send will fail.".into();
+        }
+        ["uncertain"] if !app.live_service => {
+            app.next_outcome = MockOutcome::Uncertain;
+            app.notice = "Next mock send will have uncertain acceptance.".into();
+        }
+        ["reconcile"] if !app.live_service => {
+            if let SendState::Uncertain(operation) = &app.session.composer.send {
+                let id = operation.operation;
+                if app.shared {
+                    app.actions
+                        .push(crate::service::Action::Reconcile { operation: id });
+                }
+                app.accepted(id);
+                app.sync_editor();
+                app.notice =
+                    "MOCK RECONCILED · simulated acceptance confirmed without resending.".into();
+            }
+        }
+        ["resolve", outcome] if app.live_service && ["accepted", "not-sent"].contains(outcome) => {
+            if let SendState::Uncertain(op) = &app.session.composer.send {
+                let action = crate::service::Action::Resolve {
+                    expected: app.session.composer.clone(),
+                    operation: op.operation,
+                    accepted: *outcome == "accepted",
+                };
+                app.actions.push(action.clone());
+                let shared = app.shared;
+                app.shared = false;
+                let _ = crate::service::apply(app, &action);
+                app.shared = shared;
+                app.notice="Owner-reported outcome recorded; verify in the original client before using resolve.".into();
+            }
+        }
+        ["connections"] => {
+            app.notice = app
+                .settings.accounts
+                .iter()
+                .map(|account| {
+                    let status = if !account.enabled { "disabled · :account enable ID starts sync" } else { app.provider_status.get(&account.id).map(String::as_str).unwrap_or("waiting for provider") };
+                    format!("{}: {status}", account.id)
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        }
+        ["settings"] => {
+            app.settings_entry = app.settings_page.clone();
+            app.mode = Mode::Settings;
+        }
+        ["profile", "add", id] => match app.settings.add_profile(id) {
+            Ok(()) => app.notice = format!("Profile {id} added · edit its prompt in settings."),
+            Err(e) => app.notice = e.to_string(),
+        },
+        ["profile", "remove", id] => match app.settings.remove_profile(id) {
+            Ok(()) => app.refresh_filters(),
+            Err(e) => app.notice = e.to_string(),
+        },
+        ["profile", "prompt", id] => edit_setting(app, &format!("profiles.{id}.prompt")),
+        ["spam", "prompt"] => edit_setting(app, "spam.prompt"),
+        ["accounts"] => settings::open(app, SettingsPage::Section(SettingsSection::Accounts)),
+        ["account", "add"] => settings::open(app, SettingsPage::AddAccount),
+        ["account", "add", provider, rest @ ..] if rest.len() <= 1 => {
+            match parse_provider(provider).and_then(|p| {
+                let id = rest
+                    .first()
+                    .map_or_else(|| app.settings.suggest_account_id(p), |id| (*id).to_owned());
+                app.settings.add_account(&id, p).map(|()| id)
+            }) {
+                Ok(id) => {
+                    settings::open_at(
+                        app,
+                        SettingsPage::Account(id.clone()),
+                        &settings::Item::Action(settings::Action::SignIn(id.clone())),
+                    );
+                    app.notice = format!("Added {id} · :auth {id} or Enter on Sign in.")
+                }
+                Err(e) => app.notice = e.to_string(),
+            }
+        }
+        ["account", "rename", id, name @ ..] if !name.is_empty() => {
+            match app.settings.set(&format!("accounts.{id}.name"), &name.join(" ")) {
+                Ok(()) => app.notice = format!("Account {id} renamed to {}.", name.join(" ")),
+                Err(e) => app.notice = e.to_string(),
+            }
+        }
+        ["account", "remove", id] => {
+            if app.settings.accounts.iter().any(|a| a.id == *id) {
+                settings::open(app, SettingsPage::RemoveAccount((*id).into()));
+            } else {
+                app.notice = format!("unknown account {id}");
+            }
+        }
+        ["account", action @ ("enable" | "disable" | "connect" | "disconnect"), id] => {
+            let enable = matches!(*action, "enable" | "connect");
+            match app.settings.set(&format!("accounts.{id}.enabled"), if enable { "true" } else { "false" }) {
+                Ok(()) => app.notice = format!("Account {id} {} · :connections shows sync status; allow_send controls replies.", if enable { "enabled" } else { "disabled" }),
+                Err(e) => app.notice = e.to_string(),
+            }
+        }
+        ["account", ..] => app.notice = "Usage: :account add [PROVIDER [ID]] · rename ID NAME · remove ID · enable ID / disable ID".into(),
+        ["auth", id] => begin_auth(app, id),
+        ["dismiss"] => app.toggle_dismissed(),
+        ["dismissed"] => app.toggle_show_dismissed(),
+        ["focus", value] => app.set_profile(value),
+        ["source", value] => match app.settings.set("source", value) {
+            Ok(()) => app.set_source(app.settings.source),
+            Err(e) => app.notice = e.to_string(),
+        },
+        ["theme", value] => {
+            if let Err(e) = app.settings.set("theme", value) {
+                app.notice = e.to_string();
+            }
+        }
+        ["motion"] => app.settings.reduced_motion = !app.settings.reduced_motion,
+        ["preview"] => app.open_reader(),
+        ["help"] => {
+            app.mode = Mode::Help;
+            app.reader_scroll = 0;
+        }
+        ["quit"] => return true,
+        _ => app.notice = "Unknown command · :help lists supported commands.".into(),
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,10 +405,15 @@ mod tests {
         assert_eq!(app.mode, Mode::Settings);
         assert_eq!(app.settings.accounts[0].id, "personal");
         assert!(!app.settings.accounts[0].enabled);
-        assert!(
-            app.settings.entries()[app.setting_index]
-                .name
-                .starts_with("accounts.personal.")
+        assert_eq!(
+            app.settings_page,
+            crate::app::SettingsPage::Account("personal".into())
+        );
+        assert_eq!(
+            super::super::settings::items(&app)[app.setting_index],
+            super::super::settings::Item::Action(super::super::settings::Action::SignIn(
+                "personal".into()
+            ))
         );
         assert!(
             snapshot(&mut app, 38, 50)
@@ -268,7 +425,7 @@ mod tests {
         for command in [
             ":account add discord personal",
             ":account add invalid nope",
-            ":account add discord",
+            ":account add discord too many-ids",
         ] {
             paste(&mut app, command);
             press(&mut app, KeyCode::Enter);
@@ -313,5 +470,25 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let rendered: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(rendered.contains(":account add discord"));
+    }
+
+    #[test]
+    fn production_update_command_is_explicit_and_keeps_demo_offline_and_drafts_locked() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.editor
+            .insert("draft remains locked during update check");
+        app.update_body();
+        let before = app.session.clone();
+        run_command(&mut app, "update");
+        assert!(!app.update_requested);
+        app.shared = true;
+        app.live_service = true;
+        run_command(&mut app, "update");
+        assert!(app.update_requested);
+        assert_eq!(
+            serde_json::to_vec(&before).unwrap(),
+            serde_json::to_vec(&app.session).unwrap()
+        );
+        assert!(app.actions.is_empty());
     }
 }
