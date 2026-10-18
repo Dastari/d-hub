@@ -41,6 +41,7 @@ pub struct Settings {
     pub theme: Theme,
     pub reduced_motion: bool,
     pub insert_on_focus: bool,
+    pub reply_first: bool,
     pub padding_horizontal: u16,
     pub padding_vertical: u16,
     pub show_dismissed: bool,
@@ -61,6 +62,7 @@ impl Default for Settings {
             theme: Theme::Midnight,
             reduced_motion: false,
             insert_on_focus: true,
+            reply_first: true,
             padding_horizontal: 0,
             padding_vertical: 0,
             show_dismissed: false,
@@ -88,6 +90,7 @@ pub enum Key {
     ShowSpam,
     MarkReadOnSelect,
     DismissAfterReply,
+    ReplyFirst,
 }
 pub struct Setting {
     pub key: Key,
@@ -99,6 +102,12 @@ const PADDING_CHOICES: &[&str] = &[
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
 ];
 pub const REGISTRY: &[Setting] = &[
+    Setting {
+        key: Key::ReplyFirst,
+        name: "reply_first",
+        help: "Keep typing in composer; arrows switch messages/sources, Alt+arrows edit text",
+        choices: &["true", "false"],
+    },
     Setting {
         key: Key::Focus,
         name: "focus",
@@ -227,6 +236,7 @@ impl Settings {
     }
     pub fn get(&self, key: Key) -> String {
         match key {
+            Key::ReplyFirst => self.reply_first.to_string(),
             Key::Focus => self.focus.clone(),
             Key::Source => self.source.value().into(),
             Key::Theme => self.theme.label().into(),
@@ -261,7 +271,10 @@ impl Settings {
             .iter()
             .map(|s| SettingRow::choice(s.name, self.get(s.key), s.help, s.choices))
             .collect();
-        rows[0].choices = std::iter::once("all".into())
+        rows.iter_mut()
+            .find(|r| r.name == "focus")
+            .expect("focus registry row")
+            .choices = std::iter::once("all".into())
             .chain(self.profiles.iter().map(|p| p.id.clone()))
             .collect();
         rows.push(SettingRow::text(
@@ -411,6 +424,7 @@ impl Settings {
                 bail!("{name} must be one of {}", s.choices.join(", "));
             }
             match s.key {
+                Key::ReplyFirst => self.reply_first = value.parse()?,
                 Key::Focus => {
                     self.focus = if value == "home" && !self.profiles.iter().any(|p| p.id == "home")
                     {

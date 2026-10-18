@@ -1,7 +1,27 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct MessageId(pub u64);
+
+// JSON object keys become strings when buffered inside a tagged IPC response.
+impl<'de> Deserialize<'de> for MessageId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct IdVisitor;
+        impl serde::de::Visitor<'_> for IdVisitor {
+            type Value = MessageId;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an unsigned message ID or decimal map key")
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(MessageId(value))
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                value.parse().map(MessageId).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(IdVisitor)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Provider {
@@ -131,11 +151,12 @@ pub struct ReplyTarget {
 
 impl ReplyTarget {
     pub fn draft_key(&self) -> String {
-        // Include provider, account, conversation and reply mode without delimiter ambiguity.
+        // Each incoming message owns its reply, including within the same conversation.
         serde_json::to_string(&(
             self.provider,
             &self.account,
             &self.conversation,
+            self.incoming,
             &self.reply_mode,
         ))
         .expect("target tuple is serializable")

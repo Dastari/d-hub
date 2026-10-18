@@ -9,6 +9,7 @@ d-hub is a personal communications hub for dastari. Its primary surface is a nar
 | FEED-01 | One mixed chronological feed across accounts and sources, with source labels and no source tabs | Demo and first usable release |
 | FEED-02 | Recent unread communications, thread grouping, account/sender filters and named focus profiles | First usable release |
 | REPLY-01 | Persistent multiline reply composer targeting selected communication or latest eligible incoming item while inactive | Demo onward |
+| REPLY-03 | Reply-first arrows save/restore a draft per incoming message without leaving typing mode; Left/Right changes sources and Alt+arrows edits text; pending sends keep immutable context | Prototype onward |
 | REPLY-02 | Text or attachments lock the full reply target until successful send, explicit save-and-switch or discard | Demo onward |
 | REPLY-03 | Returning to an inactive window with an empty composer leaves it ready to reply immediately | First usable release |
 | FILE-01 | Paste copied files and clipboard images; add through a TUI file picker; remove and preview attachment chips | First usable release |

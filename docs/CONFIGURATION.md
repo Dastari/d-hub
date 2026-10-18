@@ -4,13 +4,14 @@ Use one typed settings registry to describe keys, types, defaults, validation, s
 
 ## Implemented settings
 
-The strict TOML schema remains `schema_version = 1`; older flat configs load with defaults for new fields. The shared `Settings` validation/persistence path powers `d-hub settings`, navigation `,`, and `config list|get|set|reset|validate|export`. Enter opens an editor, Ctrl+s saves, Escape cancels, and Left/Right cycles choices. CLI `config set KEY VALUE` accepts `--file PATH` instead of VALUE for multiline prompts or JSON collections. Unknown fields and invalid values fail atomically. Files are private. Close the running surface before CLI edits; cross-process settings coordination is pending.
+The strict TOML schema remains `schema_version = 1`; older flat configs load with defaults for new fields. The shared `Settings` validation/persistence path powers `d-hub settings`, navigation `,`, and `config list|get|set|reset|validate|export`. Enter opens an editor, Ctrl+s saves, Escape cancels, and Left/Right cycles choices in settings. CLI `config set KEY VALUE` accepts `--file PATH` instead of VALUE for multiline prompts or JSON collections. Unknown fields and invalid values fail atomically. Files are private. For standalone demo/settings surfaces, close the running surface before CLI file edits. For a shared drawer, use `config --socket PATH …` so the service coordinates revisions and writes.
 
 | Keys | Default / behaviour |
 | --- | --- |
 | `focus` | `all`, or any configured profile ID; `personal` displays Home; `home` is an input alias unless a distinct home profile exists |
 | `source` | `all`; navigation cycles all, icloud, discord, teams, email, office365; Email combines both mail providers |
 | `theme`, `reduced_motion`, `insert_on_focus` | midnight, false, true |
+| `reply_first` | true: Up/Down saves/restores replies per incoming message, Left/Right switches sources, Alt+arrows edits text; false restores traditional insert arrows |
 | `padding_horizontal`, `padding_vertical` | 0, range 0–16 per side; content below 28×16 uses a resize fallback |
 | `mark_read_on_select`, `dismiss_after_reply` | true; explicit selection/open marks read; accepted replies dismiss their original item |
 | `show_dismissed`, `show_spam` | false; navigation D and S include hidden items for inspection |
@@ -29,9 +30,9 @@ The strict TOML schema remains `schema_version = 1`; older flat configs load wit
 
 Credentials use `account auth ID` or `:auth ID`; `ai-auth` or `:auth ai` stores the selected AI key. Secret Service requires `secret-tool` and an unlocked keyring. CLI optionally reads secrets through `--secret-stdin`; never pass credentials as arguments. Microsoft uses delegated device login instead of password/stdin. `account forget ID` erases the credential, including after metadata removal. Bot credential storage does not imply an implemented bot transport. Personal Discord username/password, QR and user-token automation are not implemented.
 
-`demo` uses an isolated temporary profile or `demo --data-dir DIR`; its settings default to `DIR/config.toml`. Other commands use global `--config PATH` or XDG configuration. `notifications` uses `$XDG_STATE_HOME/d-hub/notifications` (normally `~/.local/state/d-hub/notifications`) or `--data-dir DIR`, separate from demo. Captured previews, local seen/dismissal state and pending read changes persist in private atomic JSON snapshots; SQLite/daemon migration remains future work. No provider currently acknowledges remote read changes.
+`demo` uses an isolated temporary profile or `demo --data-dir DIR`; its settings default to `DIR/config.toml`. Other commands use global `--config PATH` or XDG configuration. `notifications` uses `$XDG_STATE_HOME/d-hub/notifications` (normally `~/.local/state/d-hub/notifications`) or `--data-dir DIR`, separate from demo. Standalone demo/notification state still uses private atomic JSON. The explicitly launched offline service uses private SQLite WAL storage, importing demo JSON once without deleting it; it owns settings after initialization. Attached settings edits and `config --socket` share the same typed schema and SQLite transaction path. The ordinary TOML file is initialization/export, not a concurrent writer to service-owned settings. No provider currently acknowledges remote read changes.
 
-The sections below describe the broader future contract. `examples/config.toml` remains a design fixture and cannot be loaded as this implementation’s schema. Environment/profile overrides, arbitrary theme files, keyboard remapping and cross-process settings coordination remain pending. `config reset` uses built-in defaults; custom profile/account fields without a default should be edited or removed explicitly. `config list --json` reports origin at the containing TOML section level.
+The sections below describe the broader future contract. `examples/config.toml` remains a design fixture and cannot be loaded as this implementation’s schema. Environment/profile overrides, arbitrary theme files, keyboard remapping and coordination with standalone configuration writers remain pending. `config reset` uses built-in defaults; custom profile/account fields without a default should be edited or removed explicitly. `config list --json` reports origin at the containing TOML section level.
 
 ## Files and precedence
 
@@ -99,3 +100,11 @@ Themes contain metadata, semantic colours and styles plus border/icon choices. T
 Support RGB hex values, Unicode and conservative fallback borders, optional Nerd Font icons, density and reduced motion. Validate tokens and missing glyph fallbacks. Allow import/export and immediate preview without writing until Apply. Theme changes must not reset navigation or draft state.
 
 Optional Omarchy theme following should read the current desktop theme through a version-aware adapter, translate a small semantic palette and fall back to a bundled theme. Never write into packaged Omarchy files or require the development machine to run Omarchy. A stale or missing theme file is recoverable.
+
+## Offline service paths and recovery
+
+`daemon --demo --foreground --data-dir DIR [--socket PATH]` creates `DIR/service.sqlite3` with schema/user identity checks, atomic migration, a bounded 256-entry change ledger and mock outbox rows. Directories must be user-owned/private (0700); database, socket and recovery files are 0600. A directory lock excludes concurrent owners; a socket lock and same-user peer checks protect local IPC. The default socket is `$XDG_RUNTIME_DIR/d-hub/service-demo.sock`. No daemon is started or installed implicitly.
+
+Service settings initialize from `DIR/config.toml` or global `--config PATH` only for a new database. After that, `config --socket PATH list|get|set|reset|validate|export` talks to its owner; origin is reported as service and an unrelated TOML path is not presented as the active config. Concurrent stale settings edits are rejected rather than replacing another edit.
+
+On disconnect, the attached drawer preserves active/saved drafts and pending intent in `$XDG_STATE_HOME/d-hub/recovery/drawer-PID-TIME.json` (normal fallback under `~/.local/state`). If neither state/home environment path exists, it uses the private socket directory. `drawer --socket PATH --recover FILE` restores unsent drafts explicitly and retains the source file. It rejects a pending/uncertain send, an invalid target or conflicting existing drafts. Saved setting edits remain available in the recovery file for deliberate review; recovery does not overwrite settings or replay operations. Automatic reconnect is pending.

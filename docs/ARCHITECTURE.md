@@ -22,6 +22,18 @@ An optional QML Omarchy companion plugin is another client of the same versioned
 
 Use a user-private Unix socket under XDG_RUNTIME_DIR with permission and peer-identity checks, protocol version negotiation, bounded payloads and structured errors. Start with JSON messages if that keeps debugging simple. On disconnect, reconnect and request a consistent snapshot plus subsequent events rather than assuming no events were missed. Prevent concurrent daemon start with an exclusive lock. Migrate the database before accepting clients.
 
+## Implemented offline service foundation · 18 October 2026
+
+`database`, `service` and `ipc` implement an explicit `daemon --demo --foreground` owner, one editable drawer and read-only readers. This service deliberately runs no account, credential, notification or AI workers. Standalone demo and optional notification capture remain separate modes until live worker migration is implemented.
+
+SQLite schema 1 stores transactional domain snapshots/settings, a distinct mock outbox and 256 revision/change records. Bootstrap imports legacy demo JSON once, retains the original file and rejects malformed/future/foreign schemas. WAL/FULL synchronization and transaction boundaries keep draft and outbox state consistent. This is a staged migration toward the normalized provider records below, not the final provider database layout. Private attachment bytes and HTML conversion remain pending.
+
+The owner serializes typed action batches with expected global revisions and composer-state checks. A connection-scoped drawer lease prevents two editors; disconnect releases it. Explicit save-and-switch parks a draft keyed by provider/account/conversation/**incoming message**/reply mode, then restores the selected message’s draft. Old saved keys normalize from the immutable target. Reader actions only mark the requested message seen under policy. Settings edits use the same typed schema from the drawer and `config --socket`, while standalone TOML is initialization/export for the service.
+
+Unix RPC verifies same-user credentials and private socket ownership, rejects unsupported protocol versions and limits frames to 8 MiB, service snapshots to 4 MiB, connections to 16, the owner queue to 64 and action batches to 256. One bounded client worker keeps socket waits off the render loop. Clients poll revisions and receive a current snapshot plus retained change metadata; gaps request full resync. This is snapshot synchronization, not arbitrary delta replay. Concurrent stale composer/settings edits are rejected; local optimistic edits replay only against matching context, otherwise the client freezes and preserves recovery state.
+
+Mock submissions commit before the owner starts its completion timer; closing a window cannot duplicate/cancel them. A process restart converts submitting to uncertain and does not retry. Disconnected editor text and pending intent persist privately; explicit recovery restores unsent drafts with conflict/target checks and never restores send operations. Automatic reconnect, live provider ownership and actual desktop acceptance remain next work.
+
 ## Suggested code organisation
 
 Start with one Cargo package and focused modules; split into workspace crates only when it improves boundaries. Suggested modules: domain, composer, storage, service, ipc, providers, ai, notifications, clipboard, config, commands, theme, tui and launch. Keep companion QML/manifest sources under `integrations/omarchy/`, separate from Rust modules. Avoid a large provider plugin framework before two concrete providers prove the interface; the Omarchy companion uses the desktop's existing plugin mechanism.

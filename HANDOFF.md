@@ -1,6 +1,6 @@
 # d-hub implementation handoff
 
-The owner wants a dedicated TUI communications hub in a narrow Omarchy side window, with Ghostty as the primary terminal. The first offline Rust prototype is implemented; mail/Teams message transports and the background service remain pending. Account setup, typed AI decisions and an optional read-only Discord notification bridge now exist; see README and docs/VERIFICATION.md. The owner has authorised a public GitHub project at `dastari/d-hub`.
+The owner wants a dedicated TUI communications hub in a narrow Omarchy side window, with Ghostty as the primary terminal. The first offline Rust prototype is implemented; mail/Teams message transports remain pending; an explicit offline SQLite service now supports shared drawer/reader state. Account setup, typed AI decisions and an optional read-only Discord notification bridge now exist; see README and docs/VERIFICATION.md. The owner has authorised a public GitHub project at `dastari/d-hub`.
 
 ## Development environment
 
@@ -12,7 +12,7 @@ Eight repository-local skills are included under `.agents/skills`; see [skill in
 
 `cargo run --locked -- demo` runs without network access or credentials. The prototype has one mixed chronological fixture feed, focus selection, a multiline composer with fixture attachment chips, navigation/insert modes, mouse interaction and deterministic draft locks. Mock success, failure and uncertain acceptance are explicitly labelled. `--data-dir` enables atomic demo snapshot persistence with one writer; this is not the planned SQLite daemon.
 
-See [verification notes](docs/VERIFICATION.md) for automated and PTY checks. Next, demonstrate the prototype in actual Ghostty, then implement milestone 2: SQLite migrations, one background owner, versioned local IPC and a reader using the same backend. `preview --demo` currently reads immutable fictional fixtures; Ctrl+o requests Ghostty with an argv array, with an in-process fallback when spawning fails. Window focus, modified keys and actual second-window behaviour remain unverified on the target desktop.
+See [verification notes](docs/VERIFICATION.md) for automated and PTY checks. The milestone 2 foundation now includes SQLite migration/import, one state owner, versioned bounded Unix IPC, a sole drawer editor lease, service-owned mock completion, shared readers, setting coordination and recovery files. Continue with provider-normalized records/private attachment staging, HTML conversion, reconnect/event delivery improvements, then actual Ghostty acceptance before marking milestone 2 complete. `preview --demo` still reads immutable fixtures. `daemon --demo --foreground --data-dir DIR --socket PATH`, `drawer --socket PATH` and `preview --socket PATH ID` exercise shared state. Ctrl+o in an attached drawer requests Ghostty with the same socket and opaque ID through argv, with an in-process fallback when spawning fails. Window focus, modified keys and actual second-window behaviour remain unverified on the target desktop.
 
 After milestone 2, build the Omarchy companion plugin prototype in milestone 2a using fixture data. Prove drawer activation, reliable focus handling and draft preservation on the owner desktop before live integrations. The offline demo remains independent of Omarchy.
 
@@ -27,6 +27,7 @@ After milestone 2, build the Omarchy companion plugin prototype in milestone 2a 
 - Editable Work/Home and arbitrary focus profiles with per-profile prompts, plus an independent global promotional/spam exclusion policy.
 - Source brand colours, filled unread/hollow read dots, persistent seen state, accepted-reply dismissal, manual dismissal and show-dismissed access. Remote read syncing remains pending provider transports.
 - Focus profiles and AI decision filtering, with Jev from TypeSafe AI and OpenAI Decisions provider options. Optional AI summaries are a separate capability.
+- Reply-first navigation (default on): Up/Down explicitly saves/switches per-message drafts, Left/Right switches sources, Alt+arrows moves the text cursor. Keep typing in the composer; pending/uncertain sends block context changes. Draft keys include incoming message identity, and old saved keys are normalized from the stored target.
 - Dedicated context-aware reply box, automatic latest context while inactive and empty, draft locking, file/image paste and attachments.
 - Neovim-style keys alongside arrows and mouse; many configurable shortcuts and discoverable commands.
 - A second Ghostty window for full preview of long messages, before later full mail/Teams/Discord TUI clients.

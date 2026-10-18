@@ -26,7 +26,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Structured output for config and doctor (never starts a TUI)"
+        help = "Structured output where supported; never starts an interactive TUI"
     )]
     json: bool,
     #[command(subcommand)]
@@ -53,18 +53,30 @@ enum Command {
         #[arg(long, default_value_t = 36, value_parser = clap::value_parser!(u16).range(1..=150))]
         height: u16,
     },
-    /// Read a fictional message in this terminal; no daemon or accounts yet
+    /// Read a fixture or a stored message through the shared offline service
     Preview {
         #[arg(
             long,
-            required = true,
-            help = "Explicitly select the fixture-only reader"
+            required_unless_present = "socket",
+            conflicts_with = "socket",
+            help = "Fixture-only reader"
         )]
         demo: bool,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Connect to a running offline demo service"
+        )]
+        socket: Option<PathBuf>,
         message_id: u64,
     },
     /// Read/edit the implemented shared settings schema
     Config {
+        #[arg(
+            long,
+            help = "Read/edit settings owned by the running service instead of a TOML file"
+        )]
+        socket: Option<PathBuf>,
         #[command(subcommand)]
         action: ConfigAction,
     },
@@ -90,6 +102,35 @@ enum Command {
         #[arg(long)]
         secret_stdin: bool,
     },
+    /// Run the persistent offline-only service in the foreground (no account access)
+    Daemon {
+        #[arg(long, required = true)]
+        demo: bool,
+        #[arg(long, required = true)]
+        foreground: bool,
+        #[arg(long, value_name = "DIR")]
+        data_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+    },
+    /// Open the sole draft editor attached to the offline service
+    Drawer {
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Restore unsent drafts from a disconnected drawer; never replay sends"
+        )]
+        recover: Option<PathBuf>,
+    },
+    /// Inspect or stop the running offline service
+    Service {
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Report implemented capabilities and remaining desktop checks
     Doctor,
 }
@@ -112,6 +153,13 @@ enum ConfigAction {
     },
     Validate,
     Export,
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    Status,
+    Snapshot,
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -208,23 +256,58 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Preview {
             demo: _,
+            socket,
             message_id,
         } => {
-            if cli.json {
-                bail!("the reader is interactive; --json cannot start a TUI");
+            if let Some(socket) = socket {
+                let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Reader)?;
+                let snapshot = client.request_snapshot(d_hub::ipc::Command::Read {
+                    id: MessageId(message_id),
+                })?;
+                let message = snapshot
+                    .session
+                    .messages
+                    .iter()
+                    .find(|m| m.id == MessageId(message_id))
+                    .context("unknown message")?
+                    .clone();
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&message)?);
+                } else {
+                    let mut app = App::connected(snapshot.session, snapshot.settings)?;
+                    app.reader = Some(message);
+                    app.mode = d_hub::app::Mode::Reader;
+                    app.service_socket = Some(socket.clone());
+                    let link = d_hub::ipc::Link::new(client, socket, Some(MessageId(message_id)));
+                    tui::run_connected(app, link, true)?;
+                }
+            } else {
+                if cli.json {
+                    bail!(
+                        "fixture reader is interactive; use preview --socket PATH ID --json for a shared message"
+                    );
+                }
+                let settings = cli
+                    .config
+                    .as_deref()
+                    .map(Settings::load)
+                    .transpose()?
+                    .unwrap_or_default();
+                tui::reader(MessageId(message_id), settings)?;
             }
-            let settings = cli
-                .config
-                .as_deref()
-                .map(Settings::load)
-                .transpose()?
-                .unwrap_or_default();
-            tui::reader(MessageId(message_id), settings)?;
         }
-        Command::Config { action } => {
+        Command::Config { action, socket } => {
+            let mut service = socket
+                .as_deref()
+                .map(|p| d_hub::ipc::Client::connect(p, d_hub::ipc::Role::Control))
+                .transpose()?;
             let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;
-            let mut settings = Settings::load(&path)?;
-            let mut output = serde_json::json!({ "config": path, "schema_version": 1 });
+            let mut settings = service
+                .as_ref()
+                .map(|c| c.snapshot.settings.clone())
+                .map(Ok)
+                .unwrap_or_else(|| Settings::load(&path))?;
+            let mut output = serde_json::json!({ "config": if service.is_some() { serde_json::Value::Null } else { serde_json::json!(path) }, "socket":socket, "schema_version": 1 });
             match action {
                 ConfigAction::Set { key, value, file } => {
                     let value = match (value, file) {
@@ -239,14 +322,28 @@ fn run(cli: Cli) -> Result<()> {
                         _ => bail!("supply a value or --file PATH"),
                     };
                     settings.set(&key, &value)?;
-                    settings.save(&path)?;
+                    if let Some(client) = &mut service {
+                        client.request_snapshot(d_hub::ipc::Command::Configure {
+                            expected_revision: client.snapshot.revision,
+                            settings: settings.clone(),
+                        })?;
+                    } else {
+                        settings.save(&path)?;
+                    }
                     output["key"] = key.into();
                     output["value"] = value.into();
                 }
                 ConfigAction::Reset { key } => {
                     let value = Settings::default().value(&key)?;
                     settings.set(&key, &value)?;
-                    settings.save(&path)?;
+                    if let Some(client) = &mut service {
+                        client.request_snapshot(d_hub::ipc::Command::Configure {
+                            expected_revision: client.snapshot.revision,
+                            settings: settings.clone(),
+                        })?;
+                    } else {
+                        settings.save(&path)?;
+                    }
                     output["key"] = key.into();
                     output["value"] = value.into();
                 }
@@ -261,7 +358,7 @@ fn run(cli: Cli) -> Result<()> {
                         .unwrap_or_default();
                     output["settings"] = settings.entries().iter().map(|s| serde_json::json!({
                         "key": s.name, "value": s.value, "choices": s.choices, "help": s.help,
-                        "origin": if persisted.contains_key(s.name.split('.').next().unwrap_or("")) { "config" } else { "default" },
+                        "origin": if service.is_some() { "service" } else if persisted.contains_key(s.name.split('.').next().unwrap_or("")) { "config" } else { "default" },
                     })).collect::<Vec<_>>().into();
                 }
                 ConfigAction::Validate => output["valid"] = true.into(),
@@ -448,13 +545,70 @@ fn run(cli: Cli) -> Result<()> {
                 "AI credential stored. External processing still requires ai.enabled and account allow_ai."
             );
         }
+        Command::Daemon {
+            demo: _,
+            foreground: _,
+            data_dir,
+            socket,
+        } => {
+            if cli.json {
+                bail!("daemon is a foreground process; use service status --json");
+            }
+            let path = cli.config.unwrap_or_else(|| data_dir.join("config.toml"));
+            let database = d_hub::database::Database::open(&data_dir, &Settings::load(&path)?)?;
+            d_hub::ipc::serve(
+                database,
+                &socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?,
+            )?;
+        }
+        Command::Drawer { socket, recover } => {
+            if cli.json {
+                bail!("drawer is interactive; use service snapshot --json");
+            }
+            let socket = socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?;
+            let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Drawer)?;
+            if let Some(path) = recover {
+                d_hub::ipc::restore(&mut client, &path)?;
+            }
+            let snapshot = client.snapshot.clone();
+            let mut app = App::connected(snapshot.session, snapshot.settings)?;
+            app.selected = snapshot.selected;
+            app.focused = snapshot.focused;
+            app.shared = true;
+            app.service_socket = Some(socket.clone());
+            app.notice =
+                "Connected to offline service · one draft editor, shared readers, simulated sends."
+                    .into();
+            let link = d_hub::ipc::Link::new(client, socket, None);
+            app.service_socket = Some(link.socket.clone());
+            tui::run_connected(app, link, false)?;
+        }
+        Command::Service { socket, action } => {
+            let socket = socket.map(Ok).unwrap_or_else(d_hub::ipc::default_socket)?;
+            let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Control)?;
+            match action {
+                ServiceAction::Snapshot => {
+                    println!("{}", serde_json::to_string_pretty(&client.snapshot)?)
+                }
+                ServiceAction::Status => println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"protocol":d_hub::ipc::VERSION,"mode":"offline-demo","revision":client.snapshot.revision,"editor_connected":client.snapshot.editor_connected,"messages":client.snapshot.session.messages.len(),"live_providers":false})
+                    )?
+                ),
+                ServiceAction::Stop => match client.request(d_hub::ipc::Command::Stop)? {
+                    d_hub::ipc::Reply::Stopped => println!("Offline service stopped."),
+                    _ => bail!("service did not acknowledge shutdown"),
+                },
+            }
+        }
         Command::Doctor => {
             let value = serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"), "mode": "prototype", "live_providers": false,
                 "discord_personal_history": false, "discord_personal_replies": false,
                 "discord_notification_capture": "opt-in, desktop unverified",
                 "account_setup": true, "typed_decision_adapters": true, "remote_read_sync": false,
-                "network_access": true, "demo_network_access": false, "daemon_ipc": false, "omarchy_plugin": false,
+                "network_access": true, "demo_network_access": false, "daemon_ipc": true, "daemon_mode": "offline-demo-only", "sqlite_storage": true, "shared_reader": true, "omarchy_plugin": false,
                 "image_graphics": false, "fixture_reader": true,
                 "ghostty_desktop_verified": false,
                 "pending": ["Personal Discord DM history and replies", "Mail/Teams message transports and remote unread sync", "Live account/AI authentication tests", "Ghostty focus and modified keys", "Wayland clipboard", "terminal graphics", "Omarchy DND and plugin lifecycle"],
@@ -463,7 +617,7 @@ fn run(cli: Cli) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "d-hub {} · prototype\n\nImplemented: mixed feed, locked drafts, local read/dismissal, editable profiles, spam prompts, account setup, typed AI adapters and opt-in Discord notification capture.\nPending: personal Discord history/replies, mail/Teams transports, remote read sync, daemon IPC, image graphics, rich clipboard, Omarchy companion plugin.\nActual Ghostty/Omarchy desktop checks have not been run.",
+                    "d-hub {} · prototype\n\nImplemented: mixed feed, locked drafts, SQLite offline service, shared reader, local read/dismissal, editable profiles, spam prompts, account setup, typed AI adapters and opt-in Discord notification capture.\nPending: personal Discord history/replies, mail/Teams transports, remote read sync, live service integration, image graphics, rich clipboard, Omarchy companion plugin.\nActual Ghostty/Omarchy desktop checks have not been run.",
                     env!("CARGO_PKG_VERSION")
                 );
             }

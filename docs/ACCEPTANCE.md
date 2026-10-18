@@ -92,3 +92,21 @@ For each implemented milestone record command/test or manual steps, date, platfo
 | F03 | Reply fails or acceptance is uncertain | Keep original item and draft; do not dismiss or blindly resend |
 | F04 | Manually dismiss/restore, or include dismissed/spam | e/D/S work within source and focus filters; a locked draft keeps its complete target |
 | F05 | Edit profile/spam prompt during an in-flight decision | Reject stale result, retain draft, classify again under current policy or use local fallback |
+
+## Reply-first navigation and offline service
+
+| ID | Scenario | Expected |
+| --- | --- | --- |
+| R01 | Type a reply, Up/Down to another message, type another, return | Each incoming message retains its own body/attachments; insert mode remains active |
+| R02 | Two incoming messages share a conversation | Their reply targets and saved drafts remain distinct |
+| R03 | Left/Right while replying | Cycle source, save current draft and prepare/restore a visible reply; no matches parks it with no hidden recipient |
+| R04 | Alt+arrows / ordinary j/k while typing | Move the text cursor / insert literal characters; no source or message switch |
+| R05 | Switch during submitting or uncertain outcome | Keep original draft/target and explain why switching is blocked |
+| B01 | Start a second owner/editor, or edit from reader | Reject duplicate owner/editor and reader mutation; multiple readers remain usable |
+| B02 | Reader opens another item while reply is drafted | Share seen state without changing reply target/body |
+| B03 | Crash after submission; restart | Durable draft/outbox becomes uncertain; no automatic resend |
+| B04 | Drawer closes during acknowledged mock send | Owner completes once, stores result and dismisses the original incoming item |
+| B05 | Stale revision/composer/settings edit | Reject or rebase against a fresh snapshot; preserve newer work and queued local text |
+| B06 | Socket disconnect with unacknowledged text | Freeze edits/sends, write private recovery; explicit restore refuses conflicts/pending sends and never replays operations |
+| B07 | Legacy/malformed/future schema | Import valid JSON once without deleting it; reject invalid/future/foreign data without replacement |
+| B08 | Old event cursor / oversized or unsupported IPC | Signal snapshot resync / reject bounded frame or version; other clients remain usable |

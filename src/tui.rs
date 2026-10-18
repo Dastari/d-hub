@@ -32,7 +32,7 @@ use std::{
 };
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const HELP: &str = "COMPOSE\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  motion · preview · help · quit\n\nDemo messages and sends are fictional. Notification capture is read-only.\nImages, live accounts, daemon IPC and the Omarchy plugin are later milestones.";
+const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  motion · preview · help · quit\n\nDemo messages and sends are fictional. Notification capture is read-only.\nImages, live accounts, daemon IPC and the Omarchy plugin are later milestones.";
 const COMMANDS: &[&str] = &[
     "attach",
     "remove",
@@ -286,6 +286,8 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
         Span::styled(
             if app.live_feed {
                 "  NOTIFICATIONS"
+            } else if app.service_socket.is_some() {
+                "  SERVICE DEMO"
             } else {
                 "  OFFLINE DEMO"
             },
@@ -524,6 +526,8 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
         text(
             if app.live_feed {
                 format!("{mode}  ·  v open Discord  ·  e dismiss  ·  ? help")
+            } else if app.settings.reply_first {
+                format!("{mode} · ↑↓ reply · ←→ source · Alt+arrows cursor · F5 mock send")
             } else {
                 format!("{mode}  ·  F5 mock send  ·  Esc browse  ·  ? help")
             },
@@ -691,6 +695,10 @@ fn send(app: &mut App) -> Option<(Instant, u64, MockOutcome)> {
     }
     app.notice = "No send started · write a reply, or resolve the pending outcome.".into();
     if let Some(operation) = app.submit() {
+        if app.shared {
+            app.notice = "Mock send queued with the service · nothing will be delivered.".into();
+            return None;
+        }
         app.notice = "Simulating send locally · no provider is connected.".into();
         Some((
             Instant::now() + Duration::from_millis(650),
@@ -739,9 +747,7 @@ fn remove_last(app: &mut App) {
         .as_ref()
         .and_then(|d| d.attachments.len().checked_sub(1))
     {
-        app.session
-            .composer
-            .apply(ComposerEvent::RemoveAttachment(index));
+        app.remove_attachment(index);
     }
 }
 
@@ -764,9 +770,13 @@ fn launch_reader(app: &mut App, config_path: Option<&Path>) {
             };
             command.arg("--config").arg(path);
         }
-        command
-            .args(["preview", "--demo", &message.id.0.to_string()])
-            .spawn()
+        command.arg("preview");
+        if let Some(socket) = &app.service_socket {
+            command.arg("--socket").arg(socket);
+        } else {
+            command.arg("--demo");
+        }
+        command.arg(message.id.0.to_string()).spawn()
     });
     match result {
         Ok(mut child) => {
@@ -913,6 +923,10 @@ fn run_command(app: &mut App, command: &str) -> bool {
         ["reconcile"] => {
             if let SendState::Uncertain(operation) = &app.session.composer.send {
                 let id = operation.operation;
+                if app.shared {
+                    app.actions
+                        .push(crate::service::Action::Reconcile { operation: id });
+                }
                 app.accepted(id);
                 app.sync_editor();
                 app.notice =
@@ -1037,7 +1051,23 @@ fn key(
     }
     match app.mode {
         Mode::Insert => {
-            if key.code == KeyCode::Esc {
+            let alt = key.modifiers.contains(KeyModifiers::ALT);
+            if app.settings.reply_first
+                && !alt
+                && !control
+                && matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+                )
+            {
+                match key.code {
+                    KeyCode::Up => app.move_reply(-1, rows),
+                    KeyCode::Down => app.move_reply(1, rows),
+                    KeyCode::Left => app.cycle_reply_source(true),
+                    KeyCode::Right => app.cycle_reply_source(false),
+                    _ => {}
+                }
+            } else if key.code == KeyCode::Esc {
                 app.mode = Mode::Navigate;
             } else if app.session.composer.editable() && app.editor.key(key) {
                 app.update_body();
@@ -1209,7 +1239,11 @@ fn key(
             KeyCode::Right => app.set_source(app.settings.source.cycle(false)),
             KeyCode::Char('q') => return true,
             KeyCode::Char('i' | 'r') if !app.live_feed && !app.live_setup => {
-                if app.session.composer.draft.is_none()
+                if app.settings.reply_first
+                    && let Some(id) = app.selected
+                {
+                    app.switch_reply(id);
+                } else if app.session.composer.draft.is_none()
                     && let Some(id) = app.selected
                 {
                     app.select(id);
@@ -1287,10 +1321,22 @@ fn key(
 }
 
 pub fn run(
+    app: App,
+    store: Option<&DemoStore>,
+    config_path: Option<&Path>,
+    reader_only: bool,
+) -> Result<()> {
+    run_inner(app, store, config_path, reader_only, None)
+}
+pub fn run_connected(app: App, link: crate::ipc::Link, reader_only: bool) -> Result<()> {
+    run_inner(app, None, None, reader_only, Some(link))
+}
+fn run_inner(
     mut app: App,
     store: Option<&DemoStore>,
     config_path: Option<&Path>,
     reader_only: bool,
+    mut link: Option<crate::ipc::Link>,
 ) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         bail!("interactive terminal required; use demo --snapshot for a text preview");
@@ -1315,6 +1361,7 @@ pub fn run(
     let mut pending = None;
     let mut g_prefix: Option<Instant> = None;
     let mut dirty = true;
+    let mut exit_notice = None;
     let mut hits = HitAreas::default();
     let mut previous_session = serde_json::to_vec(&app.session)?;
     let mut previous_settings = app.settings.clone();
@@ -1322,6 +1369,9 @@ pub fn run(
         store.save(&app.session)?;
     }
     loop {
+        if let Some(link) = &mut link {
+            dirty |= link.sync(&mut app)?;
+        }
         dirty |= app.poll_background();
         if let Some((deadline, operation, outcome)) = pending
             && Instant::now() >= deadline
@@ -1347,20 +1397,29 @@ pub fn run(
             match event::read()? {
                 Event::Key(event) => {
                     let mode = app.mode;
-                    quit = key(
-                        &mut app,
-                        event,
-                        (hits.feed.height / 3).max(1) as usize,
-                        &mut pending,
-                        &mut g_prefix,
-                        config_path,
-                    );
+                    if link.as_ref().is_some_and(|l| !l.connected) && !reader_only {
+                        quit = (event.modifiers.contains(KeyModifiers::CONTROL)
+                            && event.code == KeyCode::Char('q'))
+                            || event.code == KeyCode::Char('q');
+                    } else {
+                        quit = key(
+                            &mut app,
+                            event,
+                            (hits.feed.height / 3).max(1) as usize,
+                            &mut pending,
+                            &mut g_prefix,
+                            config_path,
+                        );
+                    }
                     if reader_only && mode == Mode::Reader && app.mode == Mode::Navigate {
                         quit = true;
                     }
                 }
                 Event::Paste(value) => {
-                    if app.mode == Mode::Insert && app.session.composer.editable() {
+                    if link.as_ref().is_none_or(|l| l.connected)
+                        && app.mode == Mode::Insert
+                        && app.session.composer.editable()
+                    {
                         app.editor.insert(&value);
                         app.update_body();
                     } else if matches!(app.mode, Mode::EditSetting | Mode::Secret) {
@@ -1403,9 +1462,7 @@ pub fn run(
                                 .iter()
                                 .find(|(area, _)| area.contains(point))
                             {
-                                app.session
-                                    .composer
-                                    .apply(ComposerEvent::RemoveAttachment(*index));
+                                app.remove_attachment(*index);
                             } else if hits.composer.contains(point) {
                                 app.mode = Mode::Insert;
                             } else if hits.feed.contains(point) {
@@ -1413,7 +1470,11 @@ pub fn run(
                                     app.feed_offset + ((mouse.row - hits.feed.y) / 3) as usize;
                                 let id = app.visible().get(index).map(|m| m.id);
                                 if let Some(id) = id {
-                                    app.select(id);
+                                    if app.settings.reply_first {
+                                        app.switch_reply(id);
+                                    } else {
+                                        app.select(id);
+                                    }
                                 }
                             }
                         }
@@ -1438,8 +1499,19 @@ pub fn run(
             previous_settings = app.settings.clone();
         }
         if quit {
+            if let Some(link) = &mut link {
+                link.flush(&mut app)?;
+                if !link.connected {
+                    exit_notice = Some(safe_text(&app.notice));
+                }
+            }
             break;
         }
+    }
+    drop(terminal);
+    drop(_guard);
+    if let Some(notice) = exit_notice {
+        eprintln!("{notice}");
     }
     Ok(())
 }
@@ -1521,6 +1593,7 @@ mod tests {
             app.session.composer.reply_target().unwrap().provider,
             crate::domain::Provider::Office365
         );
+        app.settings.reply_first = false;
         app.editor = Editor::new("café");
         let cursor = app.editor.cursor;
         key(
@@ -1611,5 +1684,64 @@ mod tests {
         );
         assert!(app.command.text.is_empty());
         assert_eq!(app.session.composer.draft, draft);
+    }
+    #[test]
+    fn reply_first_arrows_switch_drafts_and_alt_arrows_move_the_cursor() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.editor.insert("first 東京");
+        app.update_body();
+        let original = app.session.composer.draft.clone();
+        let mut pending = None;
+        let mut prefix = None;
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(app.selected, Some(crate::domain::MessageId(4)));
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.editor.text, "j");
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.session.composer.draft, original);
+        let cursor = app.editor.cursor;
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::ALT),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert!(app.editor.cursor < cursor);
+        assert_eq!(app.settings.source, SourceFilter::All);
+        key(
+            &mut app,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            4,
+            &mut pending,
+            &mut prefix,
+            None,
+        );
+        assert_eq!(app.settings.source, SourceFilter::ICloud);
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(app.session.composer.draft, original);
     }
 }

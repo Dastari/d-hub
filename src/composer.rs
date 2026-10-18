@@ -33,7 +33,7 @@ pub struct Composer {
     pub next_operation: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     Select(Option<ReplyTarget>),
     Body(String),

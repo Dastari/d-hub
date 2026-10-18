@@ -73,3 +73,9 @@ impl DemoStore {
         )
     }
 }
+
+impl Drop for DemoStore {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._lock);
+    }
+}

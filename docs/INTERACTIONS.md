@@ -32,7 +32,7 @@ No background task may invoke discard, save-and-switch or retarget a locked draf
 
 ## Multiple windows and drafts
 
-The daemon stores one draft per conversation/reply mode initially, with revisions and an editor lease. Opening a reader does not take the lease. If full-client editing is later enabled, transfer ownership explicitly and make other editors read-only; reject stale writes. Preview windows can emit explicit “reply here” requests, but the drawer must preserve an existing draft and offer save-and-switch.
+The daemon stores one draft per incoming message/reply mode, including distinct replies within one conversation, with revisions and an editor lease. Opening a reader does not take the lease. If full-client editing is later enabled, transfer ownership explicitly and make other editors read-only; reject stale writes. Preview windows can emit explicit “reply here” requests, but the drawer must preserve an existing draft and offer save-and-switch.
 
 Ghostty focus events describe terminal focus, not necessarily all compositor visibility. Verify whether hidden, inactive and selected-window states can be identified reliably. If focus detection is unavailable, retain context conservatively and provide an explicit follow-latest toggle; never assume inactivity from elapsed typing time.
 
@@ -44,8 +44,10 @@ Modes are navigation, composer insert, command entry and modal dialog. An option
 
 | Action | Proposed default | Scope |
 | --- | --- | --- |
-| Move selection | j/k, Up/Down | Navigation |
-| Cycle source filter | Left/Right | Navigation; text cursor movement in insert mode |
+| Switch reply, saving/restoring drafts | Up/Down | Reply-first insert mode; input stays ready |
+| Move selection without switching a locked reply | j/k, Up/Down | Explicit navigation mode (Escape) |
+| Move text cursor | Alt+arrows | Reply-first insert mode |
+| Cycle source filter | Left/Right | Reply-first insert and navigation; reply-first also saves/switches the prepared reply; traditional insert mode uses these for cursor motion |
 | First/last | gg/G, Home/End | Navigation |
 | Scroll page | Ctrl+d/Ctrl+u, PageDown/PageUp | Feed or reader |
 | Focus next/previous pane | Tab/Shift+Tab | Outside text completion/dialog-specific use |
@@ -65,7 +67,7 @@ Modes are navigation, composer insert, command entry and modal dialog. An option
 
 These are proposals, not terminal-independent guarantees. Test Ctrl+Enter/Alt+Enter, enhanced keyboard protocol, terminal-reserved keys and text-paste conflicts in installed Ghostty. Offer alternate bindings when terminals cannot distinguish keys. Avoid Super bindings inside the app; leave window movement to Omarchy. Prefix sequences must timeout and show discoverable hints.
 
-Mouse selects rows, scrolls panes, follows links through explicit actions, focuses composer and removes attachment chips. Hover should not retarget a reply. Scrolling alone should not change the target. Never let a click on a remove chip fall through into send.
+In reply-first mode, an explicit message click saves/restores that message’s reply and retains insert mode. Traditional navigation preserves the locked composer while browsing. Mouse scrolls panes, follows links through explicit actions, focuses composer and removes attachment chips. Hover should not retarget a reply. Scrolling alone should not change the target. Never let a click on a remove chip fall through into send.
 
 ## Drawer layout
 
@@ -93,7 +95,7 @@ At very narrow widths, wrap safely and prioritise recipient, body and attachment
 
 Prefer spacing and subtle surface colours to enclosing boxes. Message sources share semantic success/error colours and have distinct source colours for dots and selection, including Discord blurple. Use labels for source identity as well. Slow accent colour shifts and braille activity indicators provide motion without rearranging content. Reduced motion uses static colours and activity labels.
 
-The header shows one active source filter, cycled with Left/Right in navigation mode: All, iCloud, Discord, Teams, Email and Office 365, wrapping in both directions. Email includes both mail providers. Source filters intersect with focus and search within the same feed. Filtering may change the previewed item, but cannot retarget an existing draft. A hidden empty target is cleared while focused; explicit message selection prepares a new reply. Inactive following uses the latest incoming item eligible under both source and focus. Empty combinations show a visible no-matches state.
+The header shows one active source filter, cycled with Left/Right in reply-first insert or navigation mode: All, iCloud, Discord, Teams, Email and Office 365, wrapping in both directions. Email includes both mail providers. Source filters intersect with focus and search within the same feed. Background filtering may change the previewed item but cannot retarget an existing draft. In reply-first mode, explicit source-arrow actions save the current draft before preparing/restoring a visible message’s reply; an empty result parks it and clears the recipient. A hidden empty target is cleared while focused; explicit message selection prepares a new reply. Inactive following uses the latest incoming item eligible under both source and focus. Empty combinations show a visible no-matches state.
 
 Outer padding is configurable per axis and defaults to zero. `padding_horizontal` applies equally to the left and right edges; `padding_vertical` applies equally to the top and bottom. Internal composer and dialog spacing remains separate. Layout and mouse hit regions use the same inset area; padding changes must preserve drafts and reply targets.
 
@@ -112,3 +114,11 @@ Solid ● means unread; hollow ○ means read. Explicit selection/open marks rea
 `f` cycles All, Work, Home and custom profiles. Each profile has an editable independent decision prompt. A global spam/promotion policy applies before focus filtering, including in All; `S` includes matches for inspection. AI has no send or draft authority and requires global/per-account opt-in. Pending/failure fallback remains accessible.
 
 For the initial personal Discord experience, new DMs join the shared feed in arrival order and support quick reply. Older conversation history is phase 2 (or phase 3 if needed), fetched only when the owner explicitly opens a chat and requests/scrolls older pages. Show cached context while loading; stale history results cannot switch conversations or redirect a draft. Backfill must not reorder the shared arrivals, generate fresh alerts, or mark all older messages read merely because they loaded. The optional notification bridge currently provides only captured previews; `v` requests the official DM list, requiring manual conversation selection. There is no full history, conversation-specific handoff, in-app reply or remote read sync in that mode. Preserve this capability gap in the UI and plan.
+
+## Implemented reply-first flow and shared service · 18 October 2026
+
+`reply_first` defaults true and is editable through TUI/CLI. In insert mode, Up/Down is an explicit save-and-switch action, not passive browsing: park the complete current draft, select the adjacent visible incoming item, restore its own draft/attachments and remain in insert mode. Left/Right changes the source and performs the same explicit preparation; Alt+Left/Right moves the text cursor and Alt+Up/Down moves within multiline text. Normal letters, including j/k, remain input. Pending and uncertain sends reject switching. Escape enters the separate navigation mode for browsing/commands without releasing a lock. With `reply_first = false`, original cursor arrows and explicit `s` remain available.
+
+The offline service holds one drawer editor lease; readers never take it. Settings, read markers, drafts and mock outbox transitions commit through its single owner. IPC uses versioned length-framed JSON, same-user checks and bounded payloads/queues. Reader open marks only the selected item seen under policy; it never selects a reply recipient. Readers receive current snapshots as revisions change. A client with an old revision obtains a fresh snapshot; stale composer edits are rejected. The bounded change ledger signals when a cursor needs full resynchronization.
+
+A disconnected drawer keeps cached content, freezes editing/sending and writes private recovery state. Closing an acknowledged editor does not stop the owner or its mock send. On restart, interrupted submission becomes uncertain; an explicit mock reconciliation is required. Recovery imports only unsent active/saved drafts with matching targets, does not overwrite conflicting work, and never replays a send. Actual Ghostty focus and graphics behaviour remains unverified.

@@ -15,4 +15,5 @@ jobs:
       - run: cargo +stable clippy --locked --all-targets -- -D warnings
       - run: cargo +stable test --locked
       - run: python3 tests/terminal_smoke.py
+      - run: python3 tests/service_terminal_smoke.py
       - run: cargo +stable run --locked -- demo --snapshot

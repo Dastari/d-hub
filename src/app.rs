@@ -54,7 +54,7 @@ pub enum Mode {
     Secret,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MockOutcome {
     Success,
     Failure,
@@ -68,6 +68,9 @@ pub type PendingDecision = (
 );
 
 pub struct App {
+    pub shared: bool,
+    pub service_socket: Option<std::path::PathBuf>,
+    pub actions: Vec<crate::service::Action>,
     pub session: Session,
     pub settings: Settings,
     pub selected: Option<MessageId>,
@@ -101,6 +104,17 @@ impl App {
             bail!("unsupported demo state schema {}", session.schema_version);
         }
         session.composer.recover();
+        let mut saved = BTreeMap::new();
+        for draft in session.saved.into_values() {
+            let key = draft.target.draft_key();
+            if let Some(existing) = saved.get(&key)
+                && existing != &draft
+            {
+                bail!("conflicting saved drafts; original snapshot preserved");
+            }
+            saved.insert(key, draft);
+        }
+        session.saved = saved;
         if settings.dismiss_after_reply {
             for sent in &session.composer.sent {
                 let id = sent.draft.target.incoming;
@@ -120,6 +134,9 @@ impl App {
         }
         let editor = Editor::new(session.composer.body());
         let mut app = Self {
+            shared: false,
+            service_socket: None,
+            actions: vec![],
             session,
             settings,
             selected: None,
@@ -155,6 +172,30 @@ impl App {
         }
         app.reconcile_filters();
         Ok(app)
+    }
+
+    /// Client snapshots must not recover an in-flight operation or run follow logic.
+    pub fn connected(session: Session, settings: Settings) -> Result<Self> {
+        let mut app = Self::new(session.clone(), settings)?;
+        app.session = session;
+        app.sync_editor();
+        Ok(app)
+    }
+    fn record(&mut self, action: crate::service::Action) {
+        if self.shared {
+            self.actions.push(action);
+        }
+    }
+    pub fn compose(&mut self, event: Event) -> Option<Submission> {
+        self.record(crate::service::Action::Compose {
+            expected: self.session.composer.clone(),
+            event: event.clone(),
+            outcome: self.next_outcome,
+        });
+        self.session.composer.apply(event)
+    }
+    pub fn remove_attachment(&mut self, index: usize) {
+        self.compose(Event::RemoveAttachment(index));
     }
 
     pub fn visible(&self) -> Vec<&Message> {
@@ -208,6 +249,7 @@ impl App {
     }
 
     pub fn focus(&mut self, focused: bool) {
+        self.record(crate::service::Action::Focus { focused });
         self.focused = focused;
         if !focused {
             self.follow_latest();
@@ -222,6 +264,10 @@ impl App {
     }
 
     pub fn select(&mut self, id: MessageId) {
+        self.record(crate::service::Action::Select {
+            id,
+            prepare_reply: self.session.composer.draft.is_none(),
+        });
         let target = self
             .session
             .messages
@@ -264,15 +310,25 @@ impl App {
     }
 
     pub fn set_profile(&mut self, id: &str) {
+        let before = self.settings.clone();
         if let Err(error) = self.settings.set("focus", id) {
             self.notice = error.to_string();
             return;
         }
+        self.record(crate::service::Action::Configure {
+            before,
+            settings: self.settings.clone(),
+        });
         self.reconcile_filters();
     }
 
     pub fn set_source(&mut self, source: SourceFilter) {
+        let before = self.settings.clone();
         self.settings.source = source;
+        self.record(crate::service::Action::Configure {
+            before,
+            settings: self.settings.clone(),
+        });
         self.reconcile_filters();
         self.notice = format!(
             "Source: {} · Left/Right cycles sources; f changes focus.",
@@ -302,6 +358,7 @@ impl App {
     }
 
     pub fn arrive(&mut self) {
+        self.record(crate::service::Action::Incoming);
         if self.session.arrivals >= 10_000 {
             self.notice = "Fixture arrival limit reached.".into();
             return;
@@ -326,6 +383,20 @@ impl App {
     }
 
     pub fn update_body(&mut self) {
+        if self.settings.reply_first
+            && self.session.composer.draft.is_none()
+            && (self.session.composer.reply_target().is_none() || self.has_saved_target())
+            && let Some(id) = self.selected
+            && self.selected_message().is_some_and(|m| m.target.is_some())
+        {
+            let input = self.editor.clone();
+            self.switch_reply(id);
+            if self.session.composer.draft.is_some() {
+                self.editor.insert(&input.text);
+            } else {
+                self.editor = input;
+            }
+        }
         if self.has_saved_target() {
             self.sync_editor();
             self.notice =
@@ -333,9 +404,7 @@ impl App {
                     .into();
             return;
         }
-        self.session
-            .composer
-            .apply(Event::Body(self.editor.text.clone()));
+        self.compose(Event::Body(self.editor.text.clone()));
         if self.session.composer.draft.is_none() {
             self.sync_editor();
             self.notice = "Select a reply-capable message first.".into();
@@ -355,9 +424,7 @@ impl App {
                     .into();
             return;
         }
-        self.session
-            .composer
-            .apply(Event::Attach(fixtures::attachment()));
+        self.compose(Event::Attach(fixtures::attachment()));
         self.notice = "Added harmless fixture attachment (no file access or upload).".into();
     }
 
@@ -383,34 +450,98 @@ impl App {
                     .into();
             return None;
         }
-        self.session.composer.apply(Event::Submit)
+        self.compose(Event::Submit)
     }
 
     pub fn discard(&mut self) {
         let target = self.selected_message().and_then(|m| m.target.clone());
-        self.session.composer.apply(Event::Discard(target));
+        self.compose(Event::Discard(target));
         self.sync_editor();
         self.mode = Mode::Navigate;
     }
 
     pub fn save_switch(&mut self) {
+        if let Some(id) = self.selected {
+            self.switch_reply(id);
+        }
+    }
+
+    /// Explicit navigation saves the old message draft before selecting the next target.
+    pub fn switch_reply(&mut self, id: MessageId) {
         if !self.session.composer.editable() {
-            self.notice = "Resolve the pending send before switching drafts.".into();
+            self.notice = "Finish or reconcile the pending send before switching replies.".into();
             return;
         }
-        let Some(target) = self.selected_message().and_then(|m| m.target.clone()) else {
-            self.notice = "Select a reply-capable message first.".into();
+        let Some(message) = self.session.messages.iter().find(|m| m.id == id) else {
             return;
         };
-        let key = target.draft_key();
+        let target = message.target.clone();
+        self.record(crate::service::Action::Switch {
+            expected: self.session.composer.clone(),
+            id,
+        });
         if let Some(draft) = self.session.composer.draft.take() {
             self.session.saved.insert(draft.target.draft_key(), draft);
         }
-        self.session.composer.target = Some(target);
-        self.session.composer.draft = self.session.saved.remove(&key);
+        self.session.composer.target = target.clone();
+        self.session.composer.draft = target
+            .as_ref()
+            .and_then(|t| self.session.saved.remove(&t.draft_key()));
         self.session.composer.send = SendState::Ready;
+        self.selected = Some(id);
+        if self.settings.mark_read_on_select {
+            self.set_unread(id, false);
+        }
         self.sync_editor();
-        self.notice = "Previous draft saved · selected conversation ready.".into();
+        self.mode = Mode::Insert;
+        self.notice = if target.is_some() { "Reply ready · previous message’s draft saved · arrows switch messages/sources, Alt+arrows edit text." } else { "Previous reply saved · this item has no reply capability." }.into();
+    }
+
+    pub fn park_reply(&mut self) {
+        if !self.session.composer.editable() {
+            return;
+        }
+        self.record(crate::service::Action::Park {
+            expected: self.session.composer.clone(),
+        });
+        if let Some(draft) = self.session.composer.draft.take() {
+            self.session.saved.insert(draft.target.draft_key(), draft);
+        }
+        self.session.composer.target = None;
+        self.session.composer.send = SendState::Ready;
+        self.selected = None;
+        self.sync_editor();
+        self.mode = Mode::Insert;
+    }
+    pub fn cycle_reply_source(&mut self, backwards: bool) {
+        if !self.session.composer.editable() {
+            self.notice = "Finish or reconcile the pending send before switching replies.".into();
+            return;
+        }
+        self.set_source(self.settings.source.cycle(backwards));
+        if let Some(id) = self.selected {
+            self.switch_reply(id);
+        } else {
+            self.park_reply();
+        }
+    }
+
+    pub fn move_reply(&mut self, delta: isize, rows: usize) {
+        let visible = self.visible();
+        if visible.is_empty() {
+            return;
+        }
+        let current = visible
+            .iter()
+            .position(|m| Some(m.id) == self.selected)
+            .unwrap_or(0);
+        let index = current.saturating_add_signed(delta).min(visible.len() - 1);
+        let id = visible[index].id;
+        self.switch_reply(id);
+        self.feed_offset = self
+            .feed_offset
+            .min(index)
+            .max(index.saturating_sub(rows.saturating_sub(1)));
     }
 
     pub fn open_reader(&mut self) {
@@ -488,6 +619,10 @@ impl App {
 
     pub fn toggle_dismissed(&mut self) {
         if let Some(id) = self.selected {
+            self.record(crate::service::Action::Dismiss {
+                id,
+                dismissed: !self.dismissed(id),
+            });
             let state = self.session.message_state.entry(id).or_default();
             state.dismissed = !state.dismissed;
             self.notice = if state.dismissed {
@@ -532,6 +667,7 @@ impl App {
     }
 
     pub fn set_unread(&mut self, id: MessageId, unread: bool) {
+        self.record(crate::service::Action::Unread { id, unread });
         let Some(message) = self.session.messages.iter_mut().find(|m| m.id == id) else {
             return;
         };

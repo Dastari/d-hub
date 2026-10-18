@@ -6,7 +6,7 @@ Deliver a standalone Rust application with an optional Omarchy companion plugin.
 
 ## Implementation status · 17 October 2026
 
-The foundations and first offline TUI slice are implemented with locked dependencies, a deterministic composer, shared settings registry, fake send outcomes and isolated demo snapshot persistence. The interface follows the owner's minimal-border, shared-colour, animated-accent direction, with a reduced-motion option. A basic read-only fixture reader is available; the SQLite daemon, shared-reader IPC, image graphics and Omarchy companion remain future work. Actual target-desktop acceptance is pending. See [verification record](VERIFICATION.md) before treating milestone exit criteria as passed.
+The foundations and first offline TUI slice are implemented with locked dependencies, a deterministic composer, shared settings registry, fake send outcomes and isolated demo snapshot persistence. The interface follows the owner's minimal-border, shared-colour, animated-accent direction, with a reduced-motion option. A basic read-only fixture reader is available; an offline SQLite owner and shared drawer/reader IPC are now implemented; private attachment bytes, HTML conversion, richer reconnect, live-worker migration, image graphics and the Omarchy companion remain future work. Actual target-desktop acceptance is pending. See [verification record](VERIFICATION.md) before treating milestone exit criteria as passed.
 
 ## Owner requirements and current slice · 17 October 2026
 
@@ -16,7 +16,7 @@ The feed/settings slice adds source brand colours, filled/hollow unread/read mar
 
 Account metadata, keyring storage, explicit Microsoft device setup and Jev/OpenAI decision adapters are implemented ahead of their broader milestones. Mail/Teams fetching/sending and owner live tests remain pending. An **optional**, explicitly selected Discord desktop notification bridge captures matching arrivals without credentials. It is read-only, does not recover full history or send replies, and cannot reliably deep-link the matching conversation. It does not satisfy the primary Discord acceptance criteria. Default Discord account mode retains the personal-client requirement.
 
-Keep milestone 2’s single background owner and IPC next; move optional capture into that owner before multiple live windows or alerts. Resolve personal message access/reply feasibility for phase 1; track on-demand history separately for phase 2. Do not downgrade the requirement to channels or notification previews.
+Milestone 2’s offline owner/IPC foundation is implemented. Complete attachment staging, HTML conversion and reconnect work, and move optional capture/AI into the owner before multiple live-provider windows or alerts. Resolve personal message access/reply feasibility for phase 1; track on-demand history separately for phase 2. Do not downgrade the requirement to channels or notification previews.
 
 ## Discord delivery phases · owner clarification 18 October 2026
 
@@ -41,6 +41,8 @@ Implement chronological mixed feed, focus selection, previews, multiline input, 
 Exit: acceptance scenarios C01–C09, U01 and K01 pass in tests/demo. The owner can switch to the window, type a reply, browse elsewhere and see that the draft remains correctly targeted.
 
 ## Milestone 2 Persistent service and full reader
+
+Implemented foundation: private SQLite schema/import with retained JSON backup, revision-checked typed Unix IPC, sole editor lease, shared readers, service-owned mock sends, interrupted-send recovery, private disconnected-draft recovery and coordinated service settings. Reply-first arrows save/restore drafts per incoming message, preserving typing focus: Up/Down switches messages, Left/Right sources, and Alt+arrows edits text. This is the owner’s 18 October clarification; explicit navigation mode remains available. Automated and two-terminal PTY checks pass; this does not close the desktop or remaining attachment/HTML/live-worker acceptance criteria.
 
 Add SQLite migrations, private attachment staging, durable drafts/outbox, single daemon ownership and versioned local IPC. Open full-message reader in a second Ghostty window. Add shared event replay, crash/restart recovery and conservative focus handling. Use typed launch arguments and readable HTML-to-terminal conversion.
 
@@ -110,4 +112,4 @@ Exit: install/uninstall leaves user data policy explicit, application/plugin upg
 
 ## Recommended next agent prompt
 
-> Read AGENTS.md, HANDOFF.md, docs/VERIFICATION.md and docs/PLAN.md. Use the relevant project skills under .agents/skills. Review the existing offline prototype and preserve its composer locks and minimal-border visual direction. Complete actual Ghostty acceptance where available, then implement milestone 2's single background owner, SQLite persistence and versioned IPC. Upgrade the fixture reader to use that shared backend; follow with milestone 2a's Omarchy companion prototype. Do not connect live accounts, send real messages or silently change desktop configuration. Record automated versus actual desktop checks separately.
+> Read AGENTS.md, HANDOFF.md, docs/VERIFICATION.md and docs/PLAN.md. Use the relevant project skills under .agents/skills. Review the existing offline prototype and preserve its composer locks and minimal-border visual direction. Complete actual Ghostty acceptance where available, review the implemented offline owner, SQLite transactions, IPC leases and reply-first navigation. Finish milestone 2’s private attachment staging, readable HTML conversion and reconnect behaviour, plus owner desktop acceptance; migrate existing notification/AI workers into the owner before live multiwindow use. Then follow with milestone 2a’s Omarchy companion prototype. Do not connect live accounts, send real messages or silently change desktop configuration. Record automated versus actual desktop checks separately.

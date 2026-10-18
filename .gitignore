@@ -13,3 +13,12 @@
 /demo-profile/
 **/demo-state.json
 **/.demo.lock
+
+**/__pycache__/
+**/drawer-recovery-*.json
+
+/service-demo/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+**/drawer-*.json

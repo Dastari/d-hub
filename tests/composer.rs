@@ -345,6 +345,7 @@ fn focused_arrival_preserves_the_visible_feed_anchor() {
 #[test]
 fn following_a_conversation_with_saved_work_cannot_overwrite_it() {
     let mut app = app();
+    app.settings.reply_first = false;
     write(&mut app, "saved Kai reply");
     let saved = app.session.composer.draft.clone().unwrap();
     app.select(MessageId(4));
