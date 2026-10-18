@@ -12,3 +12,5 @@ Install:
 ```sh
 curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh
 ```
+
+If upgrading from the development build before v0.2.1: save and close the drawer, run `d-hub service stop` once, then install and relaunch. Subsequent managed releases use automatic handover.
