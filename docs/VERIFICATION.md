@@ -239,3 +239,7 @@ Changes after owner feedback from a WSL terminal showing iCloud mail.
 - **Stray characters on screen.** Text sanitising now also removes invisible formatting characters common in mail preheaders: soft hyphens, combining grapheme joiners, zero-width spaces and non-joiners, Hangul fillers, bidi controls, BOMs, tag characters and non-emoji variation selectors. Emoji joiners and emoji presentation selectors are kept. This is the likely cause, because these characters are where the layout's width table and the terminal disagree. The exact characters in the owner's mail were not available, so it has not been confirmed on the WSL terminal.
 
 New tests cover each of these: TestBackend renders of the preview, the reply box and the feed, plus a key-dispatch test of Delete. All 183 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. Only fictional data was used.
+
+## v0.4.3 publication
+
+[v0.4.3](https://github.com/dastari/d-hub/releases/tag/v0.4.3) is published (provider follow-ups and drawer readability). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39176281246) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39176281392) passed. Locally, all 183 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.3, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
