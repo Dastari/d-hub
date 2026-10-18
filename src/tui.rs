@@ -1,3 +1,4 @@
+pub(crate) mod commands;
 mod settings;
 
 use crate::{
@@ -35,35 +36,6 @@ use std::{
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  update · motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nPersonal Discord replies, images and the Omarchy plugin remain pending.";
-const COMMANDS: &[&str] = &[
-    "update",
-    "attach",
-    "remove",
-    "incoming",
-    "follow",
-    "save-switch",
-    "discard",
-    "send",
-    "fail",
-    "uncertain",
-    "reconcile",
-    "settings",
-    "focus all",
-    "focus work",
-    "focus personal",
-    "source all",
-    "source discord",
-    "source teams",
-    "source email",
-    "source icloud",
-    "source office365",
-    "theme midnight",
-    "theme dusk",
-    "motion",
-    "preview",
-    "help",
-    "quit",
-];
 
 struct TerminalGuard;
 
@@ -268,8 +240,14 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
         );
         return HitAreas::default();
     }
-    if app.mode == Mode::Settings {
-        return settings::draw(frame, area, p, app);
+    if app.mode == Mode::Settings
+        || (app.mode == Mode::Command && app.command_origin == Mode::Settings)
+    {
+        let hit = settings::draw(frame, area, p, app);
+        if app.mode == Mode::Command {
+            commands::draw(frame, area, p, app);
+        }
+        return hit;
     }
     let composer_height = (area.height / 3).clamp(6, 11);
     let preview_height = if area.height >= 28 { 5 } else { 3 };
@@ -642,30 +620,15 @@ fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAreas {
             &"•".repeat(app.command.text.chars().count().min(80)),
             0,
         ),
-        Mode::Command | Mode::Search => {
-            let prefix = if app.mode == Mode::Command { ":" } else { "/" };
-            let line = format!("{prefix}{}", app.command.text);
+        Mode::Command => commands::draw(frame, area, p, app),
+        Mode::Search => {
+            let line = format!("/{}", app.command.text);
             let area = Rect::new(parts[4].x, parts[4].y + 1, parts[4].width, 1);
             frame.render_widget(Clear, area);
             frame.render_widget(
                 text(line, p.accent).style(Style::default().fg(p.accent).bg(p.surface)),
                 area,
             );
-            if app.mode == Mode::Command {
-                let available = COMMANDS
-                    .iter()
-                    .filter(|c| c.starts_with(&app.command.text))
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                frame.render_widget(
-                    text(available, p.muted),
-                    Rect {
-                        height: 1,
-                        ..parts[4]
-                    },
-                );
-            }
             let column =
                 unicode_width::UnicodeWidthStr::width(&app.command.text[..app.command.cursor])
                     as u16
@@ -1239,8 +1202,8 @@ fn open_discord(app: &mut App) {
 }
 
 fn run_command(app: &mut App, command: &str) -> bool {
-    app.mode = Mode::Navigate;
-    let words: Vec<_> = command.split_whitespace().collect();
+    app.mode = app.command_origin;
+    let words: Vec<_> = commands::input(command).split_whitespace().collect();
     match words.as_slice() {
         ["update"] if app.shared && app.live_service => {
             app.update_requested = true;
@@ -1318,13 +1281,16 @@ fn run_command(app: &mut App, command: &str) -> bool {
         ["account", "add", provider, id] => {
             match parse_provider(provider).and_then(|p| app.settings.add_account(id, p)) {
                 Ok(()) => {
-                    app.notice = format!(
-                        "Account {id} added · edit account fields in settings; :auth {id} starts setup."
-                    )
+                    app.mode = Mode::Settings;
+                    app.setting_index = app.settings.entries().iter().position(|row| {
+                        row.name.starts_with(&format!("accounts.{id}."))
+                    }).unwrap_or(app.setting_index);
+                    app.notice = format!("Added {id} · :auth {id} to sign in.")
                 }
                 Err(e) => app.notice = e.to_string(),
             }
         }
+        ["account", ..] => app.notice = "Usage: :account add discord|icloud|office365|teams ID (example: :account add discord personal)".into(),
         ["auth", id] => begin_auth(app, id),
         ["dismiss"] => app.toggle_dismissed(),
         ["dismissed"] => app.toggle_show_dismissed(),
@@ -1463,6 +1429,8 @@ fn key(
             KeyCode::Esc => {
                 app.mode = if app.reader.is_some() && app.mode == Mode::Search {
                     Mode::Reader
+                } else if app.mode == Mode::Command {
+                    app.command_origin
                 } else {
                     Mode::Navigate
                 };
@@ -1470,7 +1438,7 @@ fn key(
             KeyCode::Enter => {
                 let command = app.command.text.clone();
                 if app.mode == Mode::Command {
-                    if command == "send" {
+                    if commands::input(&command).trim() == "send" {
                         app.mode = Mode::Navigate;
                         if pending.is_none() {
                             *pending = send(app);
@@ -1499,16 +1467,13 @@ fn key(
                 }
             }
             KeyCode::Tab if app.mode == Mode::Command => {
-                let current = app.command.text.trim();
-                let next = COMMANDS
-                    .iter()
-                    .position(|c| *c == current)
-                    .map(|i| COMMANDS[(i + 1) % COMMANDS.len()])
-                    .or_else(|| COMMANDS.iter().find(|c| c.starts_with(current)).copied())
-                    .unwrap_or(COMMANDS[0]);
-                app.command = Editor::new(next);
+                commands::complete(app, key.modifiers.contains(KeyModifiers::SHIFT));
+            }
+            KeyCode::BackTab if app.mode == Mode::Command => {
+                commands::complete(app, true);
             }
             _ => {
+                app.command_completion = None;
                 app.command.key(key);
             }
         },
@@ -1517,8 +1482,7 @@ fn key(
             app.setting_index = app.setting_index.min(rows.len() - 1);
             match key.code {
                 KeyCode::Char(':') => {
-                    app.command = Editor::default();
-                    app.mode = Mode::Command;
+                    commands::open(app);
                 }
                 KeyCode::Esc | KeyCode::Char('q') => app.mode = Mode::Navigate,
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -1708,8 +1672,7 @@ fn key(
                 app.reader_scroll = 0;
             }
             KeyCode::Char(':') => {
-                app.mode = Mode::Command;
-                app.command = Editor::default();
+                commands::open(app);
             }
             KeyCode::Char('/') => {
                 app.mode = Mode::Search;
@@ -1831,18 +1794,8 @@ fn run_inner(
                     }
                 }
                 Event::Paste(value) => {
-                    if link.as_ref().is_none_or(|l| l.connected)
-                        && app.mode == Mode::Insert
-                        && app.session.composer.editable()
-                    {
-                        app.editor.insert(&value);
-                        app.update_body();
-                    } else if matches!(app.mode, Mode::EditSetting | Mode::Secret) {
-                        if app.command.text.len() + value.len() <= 16_384 {
-                            app.command.insert(&value);
-                        }
-                    } else if matches!(app.mode, Mode::Command | Mode::Search) {
-                        app.command.insert(&value.replace(['\n', '\r'], " "));
+                    if link.as_ref().is_none_or(|l| l.connected) {
+                        commands::paste(&mut app, &value);
                     }
                 }
                 Event::FocusGained if app.mode != Mode::DiscordQr => app.focus(true),

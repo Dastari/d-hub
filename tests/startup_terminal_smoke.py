@@ -53,9 +53,26 @@ def main():
             assert database.stat().st_mode & 0o077 == 0
 
             # Create account metadata through the first-launch TUI, without authentication.
-            terminal.send(":account add discord personal\r")
+            terminal.resize(32, 52)
+            terminal.send(":account add dis\tpersonal\r")
             terminal.wait(lambda: any(a["id"] == "personal" for a in snapshot()["settings"]["accounts"]), "account setup metadata")
             assert snapshot()["settings"]["accounts"][0]["enabled"] is False
+            # Copying a documented command in settings opens entry without running it.
+            terminal.screen_action(b"\x1b[200~:account add icloud home-mail\r\n\x1b[201~", b"Command")
+            assert len(snapshot()["settings"]["accounts"]) == 1
+            terminal.send("\r")
+            terminal.wait(lambda: len(snapshot()["settings"]["accounts"]) == 2, "pasted iCloud account")
+            # A full :command pasted into an already-open command entry works too.
+            terminal.send(":\x1b[200~:account add teams work-chat\x1b[201~\r")
+            terminal.wait(lambda: len(snapshot()["settings"]["accounts"]) == 3, "pasted Teams account")
+            terminal.send(":account add office365 work-mail\r")
+            terminal.wait(lambda: len(snapshot()["settings"]["accounts"]) == 4, "typed Microsoft account")
+            assert all(not a["enabled"] and not a["allow_send"] for a in snapshot()["settings"]["accounts"])
+            terminal.screen_action(b":account add discord cancelled", b"Command")
+            terminal.send(b"\x1b")  # Return to settings, retaining the existing four accounts.
+            for _ in range(4):
+                terminal.pump()
+            assert len(snapshot()["settings"]["accounts"]) == 4
             terminal.close()
             terminal = None
             assert snapshot()["session"]["messages"] == []  # service survives the drawer
@@ -94,7 +111,7 @@ def main():
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-    print("Startup PTY smoke passed: automatic live owner, first account setup, reuse, restart, private state and connect-only/noninteractive guards.")
+    print("Startup PTY smoke passed: automatic live owner, narrow account completion, typed/pasted setup for all providers, paste waits for Enter, cancellation, reuse/restart and private-state guards.")
 
 
 if __name__ == "__main__":

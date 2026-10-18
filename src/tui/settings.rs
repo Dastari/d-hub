@@ -142,12 +142,24 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut App) -> 
         .collect()
     };
     let footer_height = footer.len() as u16;
-    let bottom = inner.bottom().saturating_sub(footer_height + 1);
+    let notice: Vec<_> = wrapped(&safe_text(&app.notice), inner.width as usize)
+        .into_iter()
+        .take(2)
+        .map(|line| Line::styled(line, Style::default().fg(p.second)))
+        .collect();
+    let notice_height = notice.len() as u16;
+    let bottom = inner
+        .bottom()
+        .saturating_sub(footer_height + notice_height + 2);
     let viewport = Rect::new(
         inner.x,
         top.min(bottom),
         inner.width,
         bottom.saturating_sub(top),
+    );
+    frame.render_widget(
+        Paragraph::new(notice),
+        Rect::new(inner.x, bottom + 1, inner.width, notice_height),
     );
     frame.render_widget(
         Paragraph::new(footer),

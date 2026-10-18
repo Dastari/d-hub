@@ -107,6 +107,8 @@ This is the persistent-service foundation of milestone 2. It uses transactional 
 
 `cargo run --locked -- settings` opens the shared settings surface. Settings fill the available height: wider windows align names and values in columns, narrow windows stack them, and wrapped help stays with each field. Section headings, names, values and notes have distinct colours; the selected field has a continuous background. PageUp/PageDown, Home/End, mouse wheel and row clicks complement arrows/j/k. Enter edits a value; Ctrl+s saves, Escape cancels; Left/Right cycles choices. In navigation, `f` cycles All, Work, Home and any added profiles. Commands include `:profile add family`, `:profile prompt family`, `:spam prompt`, `:account add discord home-discord` and `:auth ACCOUNT` / `:auth ai`. The demo permits metadata editing but refuses credential setup.
 
+Open commands directly with `:` in settings; from the reply composer press Escape, then `:`. Tab/Shift+Tab completes matching commands, providers and configured account/profile IDs. For example, type `:account add dis`, press Tab, type `personal`, then Enter. You can also paste the complete `:account add discord personal` into settings or command entry; it waits for Enter. Long command input scrolls in narrow drawers, and adding an account opens its settings with a sign-in hint. Escape cancels command entry and returns to settings.
+
 The same settings work through CLI commands:
 
 ```sh
