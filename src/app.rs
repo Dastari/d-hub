@@ -113,6 +113,12 @@ pub struct App {
     pub secret_ref: Option<String>,
     pub discord_setup: Option<crate::discord_auth::Setup>,
     pub auth_job: Option<std::sync::mpsc::Receiver<String>>,
+    /// Latest connection check per account, shown on its settings page.
+    pub account_checks: BTreeMap<String, Vec<crate::providers::check::Step>>,
+    pub check_job: Option<(
+        String,
+        std::sync::mpsc::Receiver<Vec<crate::providers::check::Step>>,
+    )>,
     pub live_setup: bool,
     pub live_feed: bool,
     pub bridge_ready: bool,
@@ -193,6 +199,8 @@ impl App {
             secret_ref: None,
             discord_setup: None,
             auth_job: None,
+            account_checks: BTreeMap::new(),
+            check_job: None,
             live_setup: false,
             live_feed: false,
             bridge_ready: false,
@@ -962,6 +970,27 @@ impl App {
                         break;
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+        if let Some((id, receiver)) = self.check_job.take() {
+            match receiver.try_recv() {
+                Ok(steps) => {
+                    let failed = steps.iter().filter(|s| !s.ok).count();
+                    self.notice = if failed == 0 {
+                        format!("Connection check passed for {id}.")
+                    } else {
+                        format!(
+                            "Connection check: {failed} problem(s) for {id} · see its account page."
+                        )
+                    };
+                    self.account_checks.insert(id, steps);
+                    changed = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => self.check_job = Some((id, receiver)),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.notice = format!("Connection check for {id} stopped unexpectedly.");
+                    changed = true;
                 }
             }
         }

@@ -283,3 +283,74 @@ fn several_accounts_of_one_provider_get_free_ids_and_rename_without_identity_cha
     let json: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(json[1]["name"], "Gaming friends");
 }
+
+#[test]
+fn teams_chat_ids_pasted_from_web_addresses_are_decoded() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_d-hub"))
+            .arg("--config")
+            .arg(&config)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    run(&["account", "add", "teams", "work"]);
+    run(&[
+        "config",
+        "set",
+        "accounts.work.resources",
+        "19%3Aabc%40thread.v2\n19:plain@unq.gbl.spaces",
+    ]);
+    let output = run(&["config", "get", "accounts.work.resources"]);
+    let value = String::from_utf8(output.stdout).unwrap();
+    assert!(value.contains("19:abc@thread.v2"), "{value}");
+    assert!(value.contains("19:plain@unq.gbl.spaces"), "{value}");
+    assert!(!value.contains("%3A"));
+}
+
+#[test]
+fn new_microsoft_accounts_start_with_the_built_in_app_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let get = |key: &str| {
+        let output = run(&config, &["config", "get", key]);
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    for (provider, id) in [("office365", "work"), ("teams", "chat"), ("icloud", "mail")] {
+        assert!(
+            run(&config, &["account", "add", provider, id])
+                .status
+                .success()
+        );
+    }
+    for id in ["work", "chat"] {
+        assert!(
+            get(&format!("accounts.{id}.client_id"))
+                .contains(d_hub::policy::BUILT_IN_MICROSOFT_CLIENT_ID)
+        );
+        assert!(
+            get(&format!("accounts.{id}.tenant"))
+                .contains(d_hub::policy::BUILT_IN_MICROSOFT_TENANT)
+        );
+    }
+    // Other providers keep the neutral defaults, and the values remain overridable.
+    assert!(get("accounts.mail.tenant").contains("organizations"));
+    assert!(
+        run(
+            &config,
+            &["config", "set", "accounts.work.tenant", "contoso.example"]
+        )
+        .status
+        .success()
+    );
+    assert!(get("accounts.work.tenant").contains("contoso.example"));
+}

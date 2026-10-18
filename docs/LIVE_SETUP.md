@@ -9,18 +9,23 @@ cargo build --release --locked
 install -Dm755 target/release/d-hub "$HOME/.local/bin/d-hub"
 ```
 
-Install your distribution's libsecret helper if needed (`secret-tool`; Arch package `libsecret`) and unlock your desktop keyring. Passwords and refresh tokens go through Secret Service, never TOML or command arguments. Configure metadata before launching the daemon; after initialization its database owns settings.
+Install your distribution's libsecret helper if needed (`secret-tool`; Arch package `libsecret`) and unlock your desktop keyring. Passwords and refresh tokens go through Secret Service, never TOML or command arguments. Once the live service has started, its database owns settings. `config`, `account` and `profile` commands then talk to the running service automatically. While it is stopped they refuse rather than edit a file it will never read. `--config PATH` edits only a first-run seed file. The drawer's Settings › Accounts pages offer the same steps.
+
+Every non-Discord account has a read-only connection check: `d-hub account test ID` on the command line, or **Test connection** on its account page. It signs in, lists folders or Teams chats, and runs the exact first sync query, without importing, marking read or sending. Run it before enabling an account; failures show the server's own reason (for example an AADSTS code or IMAP response).
 
 ## iCloud
 
-Use your full iCloud email address and an Apple app-specific password. These example addresses are placeholders:
+Use the iCloud Mail address itself (ending @icloud.com, @me.com or @mac.com) as the username, not an Apple ID that belongs to another provider such as Gmail. The same address is used for IMAP, SMTP and From, so a custom-domain alias does not work yet. Create an app-specific password at account.apple.com › Sign-In and Security. These example addresses are placeholders:
 
 ```sh
 d-hub account add icloud personal
 d-hub config set accounts.personal.username YOUR_ICLOUD_EMAIL
 d-hub account auth personal
+d-hub account test personal
 d-hub config set accounts.personal.enabled true
 ```
+
+The check signs in to IMAP, lists your folders (use these exact names in `resources`), examines the synced folders read-only and signs in to SMTP without sending.
 
 Authentication prompts privately. Apple documents IMAP TLS on port 993 and SMTP STARTTLS on port 587. The implementation fixes the hosts to Apple's published servers; certificate validation stays enabled. See [Apple server settings](https://support.apple.com/en-us/102525).
 
@@ -30,16 +35,26 @@ SMTP replies use the captured recipient set, From identity, In-Reply-To and Refe
 
 ## Microsoft mail and Teams
 
-Register a public-client application in Microsoft Entra with device flow enabled. Tenant policy may require administrator consent. Configure separate account entries for mail and Teams, even when they share a login.
+New Office 365 and Teams accounts start with the owner's work app registration: client ID `67441acc-d050-453d-bfe3-cb6234d1efb1` in tenant `afa5c75a-9ba4-40d3-849e-b36efb2fc71f` (firstassist.com.au). That registration is single-tenant, so it signs in only accounts in that directory. Accounts created before v0.4.1 keep their saved values; set `client_id` and `tenant` to the values above.
+
+The registration must have:
+
+1. Authentication › Advanced settings › **Allow public client flows: Yes**. Without it device login fails with AADSTS7000218.
+2. API permissions › Microsoft Graph › Delegated: User.Read, Mail.ReadWrite, Mail.Send, Chat.ReadWrite (offline_access is requested automatically). These are additional to any application roles the registration already holds. If the tenant blocks user consent, an administrator must choose *Grant admin consent*, otherwise sign-in reports AADSTS65001.
+
+For another directory or a personal account, register an app in [Microsoft Entra](https://entra.microsoft.com) with the settings above. Choose *Accounts in this organizational directory only* for work or school, or the option that includes personal Microsoft accounts for Outlook.com; no redirect URI is needed. Then set `client_id` to its Application (client) ID and `tenant` to match: the Directory (tenant) ID or domain for a single-tenant app (`organizations` fails with AADSTS50194), `consumers` (or `common` for an app that allows both) for personal accounts. **Teams chats require a work or school account**: Microsoft Graph's chat APIs do not support personal accounts.
+
+Configure separate account entries for mail and Teams, even when they share a login; each signs in once.
 
 ```sh
 d-hub account add office365 work
 d-hub config set accounts.work.username YOUR_MICROSOFT_EMAIL_OR_UPN
-d-hub config set accounts.work.client_id YOUR_PUBLIC_CLIENT_ID
-d-hub config set accounts.work.tenant YOUR_TENANT_ID_OR_DOMAIN
 d-hub account auth work
+d-hub account test work
 d-hub config set accounts.work.enabled true
 ```
+
+`account auth` prints a microsoft.com/devicelogin address and code (the TUI shows them in the notice line). The check confirms the signed-in identity and granted scopes, lists folders with unread counts, and runs the seven-day delta query that the first sync uses.
 
 Delegated mail scopes are User.Read, Mail.ReadWrite, Mail.Send and offline_access. Token refresh verifies `/me` against the configured email/UPN before accessing communications, and rotates refresh credentials through the keyring. Existing authentication from earlier prototypes may need renewed consent for User.Read.
 
@@ -50,12 +65,14 @@ d-hub account add teams work-chat
 d-hub config set accounts.work-chat.username YOUR_MICROSOFT_EMAIL_OR_UPN
 d-hub config set accounts.work-chat.client_id YOUR_PUBLIC_CLIENT_ID
 d-hub config set accounts.work-chat.tenant YOUR_TENANT_ID_OR_DOMAIN
-d-hub config set accounts.work-chat.resources YOUR_TEAMS_CHAT_ID
 d-hub account auth work-chat
+d-hub account test work-chat
+d-hub config set accounts.work-chat.resources YOUR_TEAMS_CHAT_ID
+d-hub account test work-chat
 d-hub config set accounts.work-chat.enabled true
 ```
 
-Teams uses delegated User.Read, Chat.ReadWrite and offline_access. This slice supports explicit chat IDs, including one-to-one/group chats; it does not discover all chats or support channels. Supply multiple IDs on separate lines using `config set …resources --file PATH` or the TUI. Initial context is the latest 50 messages per chat; later polls page changes since the saved modification timestamp. Own and system messages are excluded. Read dots/dismissals are local: Teams client unread state is not synchronized. Replies send plain text to the captured chat. [Chat listing contract](https://learn.microsoft.com/en-us/graph/api/chat-list-messages?view=graph-rest-1.0), [chat send contract](https://learn.microsoft.com/en-us/graph/api/chatmessage-post?view=graph-rest-1.0).
+The first check lists your 50 most recent chats as `people or topic · type · ID`; copy the IDs to sync. IDs pasted from Teams web addresses (`19%3A…%40thread.v2`) are decoded automatically. The second check reads each selected chat with the same filtered query sync uses. Teams uses delegated User.Read, Chat.ReadWrite and offline_access. This slice syncs the chat IDs you choose, including one-to-one/group chats; it does not follow every chat automatically or support channels. Supply multiple IDs on separate lines using `config set …resources --file PATH` or the TUI. Initial context is the latest 50 messages per chat; later polls page changes since the saved modification timestamp. Own and system messages are excluded. Read dots/dismissals are local: Teams client unread state is not synchronized. Replies send plain text to the captured chat. [Chat listing contract](https://learn.microsoft.com/en-us/graph/api/chat-list-messages?view=graph-rest-1.0), [chat send contract](https://learn.microsoft.com/en-us/graph/api/chatmessage-post?view=graph-rest-1.0).
 
 ## Start the service and drawer
 
@@ -88,7 +105,7 @@ Only perform a first real send to an explicitly chosen test recipient/conversati
 
 ## Settings, reconnect and send outcomes
 
-All persistent account/profile/AI settings share TUI/CLI validation. Defaults: enabled=false, allow_send=false, poll_seconds=30 (range 15–3600), allow_ai=false. Active service settings must be changed through the drawer or `config --socket`; editing the seed TOML does not change them. Account/profile convenience commands also accept `--socket`:
+All persistent account/profile/AI settings share TUI/CLI validation. Defaults: enabled=false, allow_send=false, poll_seconds=30 (range 15–3600), allow_ai=false. Settings commands use the running live service by default; `--socket` selects another service explicitly:
 
 ```sh
 d-hub account --socket "$XDG_RUNTIME_DIR/d-hub/service-live.sock" list
@@ -99,7 +116,7 @@ d-hub service refresh
 
 Missing credentials, rejected consent, offline servers and throttling remain visible. Polls retry with per-account backoff; Graph Retry-After applies across queued sync/read work. Other accounts and typing remain usable. `account forget` disables the selected account before removing its keyring credential when invoked against the active service. An already-submitted request may still finish; its outcome is retained.
 
-Every send is committed before a worker can execute it. An interrupted or ambiguous operation stays uncertain and cannot retry automatically. Verify the outcome in the original client, then explicitly record what you found:
+Every send is committed before a worker can execute it. A send that never reaches the server (DNS, refused connection, TLS handshake) fails with the draft retained, ready to retry. An interrupted or ambiguous operation stays uncertain and cannot retry automatically. Verify the outcome in the original client, then explicitly record what you found:
 
 ```sh
 d-hub service snapshot --json
@@ -108,7 +125,7 @@ d-hub service resolve OPERATION_NUMBER accepted
 d-hub service resolve OPERATION_NUMBER not-sent
 ```
 
-The drawer also supports `:resolve accepted` / `:resolve not-sent`. Accepted clears/dismisses only the captured incoming item. Not-sent retains the draft and unlocks deliberate retry. These are owner-reported outcomes, not automatic provider reconciliation.
+The drawer also supports `:resolve accepted` / `:resolve not-sent`. Accepted dismisses the captured incoming item and the older messages stacked with it. Not-sent retains the draft and unlocks deliberate retry. These are owner-reported outcomes, not automatic provider reconciliation.
 
 Changing account identity/resources does not authorize old drafts or queued read changes against the replacement connection. Preserve the old account entry and add a new ID for a different login. On IPC loss the drawer freezes and saves private recovery data; restart the service and explicitly reopen/restore. Automatic client reconnect is still pending. Protocol 2 prevents older demo-only clients from connecting and mislabelling real sends; unsent protocol-1 recovery files remain explicitly importable with target/conflict checks.
 

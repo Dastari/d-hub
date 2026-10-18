@@ -106,6 +106,42 @@ pub fn response_json(response: reqwest::blocking::Response) -> Result<Value> {
     serde_json::from_slice(&bytes).context("provider returned invalid JSON")
 }
 
+/// Microsoft's own explanation (an AADSTS description or Graph error code and message) for
+/// status lines: first line only, bounded and free of terminal controls. Error bodies carry no
+/// tokens; trace and correlation IDs after the first line are dropped.
+pub fn microsoft_error(value: &Value) -> Option<String> {
+    let (code, text) = match value["error"].as_object() {
+        Some(error) => (error.get("code"), error.get("message")),
+        None => (value.get("error"), value.get("error_description")),
+    };
+    let code = code?.as_str()?;
+    let text = text
+        .and_then(Value::as_str)
+        .and_then(|t| t.lines().next())
+        .unwrap_or("")
+        .trim();
+    let detail = if text.starts_with("AADSTS") {
+        text.to_owned()
+    } else if text.is_empty() {
+        code.to_owned()
+    } else {
+        format!("{code}: {text}")
+    };
+    let detail = crate::domain::safe_text(&detail);
+    Some(match detail.char_indices().nth(200) {
+        Some((end, _)) => format!("{}…", &detail[..end]),
+        None => detail,
+    })
+}
+
+/// Reads a failed Microsoft response's explanation, if it sent one.
+pub fn microsoft_detail(response: reqwest::blocking::Response) -> String {
+    response_json(response)
+        .ok()
+        .and_then(|value| microsoft_error(&value))
+        .map_or_else(String::new, |detail| format!(" · {detail}"))
+}
+
 pub fn graph_scopes(provider: Provider) -> &'static str {
     match provider {
         Provider::Teams => {
@@ -143,9 +179,10 @@ pub fn authenticate_graph(
         .send()
         .context("Microsoft device-login request failed")?;
     if !response.status().is_success() {
+        let status = response.status().as_u16();
         bail!(
-            "Microsoft refused device login (HTTP {}); check app registration, public-client flow and tenant policy",
-            response.status()
+            "Microsoft refused device login (HTTP {status}{}); check app registration, public-client flow and tenant",
+            microsoft_detail(response)
         );
     }
     let device = response_json(response)?;
@@ -197,7 +234,10 @@ pub fn authenticate_graph(
                 bail!("Microsoft sign-in was declined")
             }
             Some("expired_token") => break,
-            _ => bail!("Microsoft sign-in failed; check app registration and consent"),
+            _ => bail!(
+                "Microsoft sign-in failed{}; check app registration and consent",
+                microsoft_error(&value).map_or_else(String::new, |d| format!(" · {d}"))
+            ),
         }
     }
     bail!("Microsoft device login expired; start authentication again")

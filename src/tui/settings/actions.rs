@@ -168,6 +168,29 @@ pub(super) fn remove_account(app: &mut App, id: &str) {
     });
 }
 
+/// Runs the read-only connection check off the render thread; results land on the page.
+fn begin_check(app: &mut App, id: &str) {
+    if !app.live_setup && !app.live_service {
+        app.notice =
+            "Connection checks need a live profile · the offline demo never connects.".into();
+        return;
+    }
+    if app.check_job.is_some() {
+        app.notice = "A connection check is already running.".into();
+        return;
+    }
+    let Some(account) = account(app, id).cloned() else {
+        return;
+    };
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.check_job = Some((account.id.clone(), rx));
+    app.account_checks.remove(&account.id);
+    app.notice = format!("Checking {}… nothing is synced or sent.", account.label());
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::providers::check::run(&account));
+    });
+}
+
 pub(super) fn run(app: &mut App, action: Action) {
     match action {
         Action::AddAccount => open(app, SettingsPage::AddAccount),
@@ -178,6 +201,7 @@ pub(super) fn run(app: &mut App, action: Action) {
                 app.command_origin = Mode::Settings;
             }
         }
+        Action::Test(id) => begin_check(app, &id),
         Action::Connect(id) => set_enabled(app, &id, true),
         Action::Disconnect(id) => set_enabled(app, &id, false),
         Action::AskRemove(id) => open(app, SettingsPage::RemoveAccount(id)),

@@ -252,6 +252,15 @@ pub(super) fn describe(
                 p.accent,
             )
         }
+        Item::Action(Action::Test(id)) => action(
+            if app.check_job.as_ref().is_some_and(|(job, _)| job == id) {
+                "Testing connection…"
+            } else {
+                "Test connection"
+            },
+            "Read-only; lists Teams chats".into(),
+            p.accent,
+        ),
         Item::Action(Action::Connect(_)) => action(
             "Connect",
             "Start syncing with the stored sign-in".into(),
@@ -316,6 +325,36 @@ const REMOVAL_EFFECTS: &str = "Stops syncing, deletes this account's settings an
     is deleted from the provider.";
 
 /// Non-selectable context above the rows.
+/// The latest connection check: one line per step, with discovered folders or chats.
+fn check_lines(app: &App, id: &str, p: Palette) -> Vec<(String, Color)> {
+    const SHOWN: usize = 12;
+    let Some(steps) = app.account_checks.get(id) else {
+        return vec![];
+    };
+    let mut lines = vec![("Last connection check".to_owned(), p.second)];
+    for step in steps {
+        let (mark, color) = if step.ok {
+            ("✓", p.success)
+        } else {
+            ("✗", p.warning)
+        };
+        lines.push((format!("{mark} {} · {}", step.name, step.detail), color));
+        for item in step.items.iter().take(SHOWN) {
+            lines.push((format!("    {item}"), p.muted));
+        }
+        if step.items.len() > SHOWN {
+            lines.push((
+                format!(
+                    "    … {} more · d-hub account test {id} lists all",
+                    step.items.len() - SHOWN
+                ),
+                p.muted,
+            ));
+        }
+    }
+    lines
+}
+
 pub(super) fn header(app: &App, p: Palette) -> Vec<(String, Color)> {
     match &app.settings_page {
         SettingsPage::Section(SettingsSection::Accounts) if app.settings.accounts.is_empty() => {
@@ -355,11 +394,13 @@ pub(super) fn header(app: &App, p: Palette) -> Vec<(String, Color)> {
                 " · replies {}",
                 if a.allow_send { "allowed" } else { "off" }
             ));
-            vec![
+            let mut lines = vec![
                 (format!("{dot} {status}"), color),
                 (safe_text(&identity), p.muted),
                 (activity, p.muted),
-            ]
+            ];
+            lines.extend(check_lines(app, id, p));
+            lines
         }
         SettingsPage::AddAccount => vec![(
             "Nothing connects until you sign in and choose Connect.".into(),

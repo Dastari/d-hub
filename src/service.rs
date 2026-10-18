@@ -664,7 +664,8 @@ impl Owner {
                         Err(error) => {
                             self.app.provider_status.insert(
                                 result.account.id.clone(),
-                                crate::domain::safe_text(&error.to_string()),
+                                // The whole chain: the outer message alone hides the server's reason.
+                                crate::domain::safe_text(&format!("{error:#}")),
                             );
                         }
                     }

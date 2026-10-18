@@ -11,6 +11,8 @@ pub struct Graph {
     client: Client,
     token: Option<(String, Zeroizing<String>, Instant)>,
     base: Url,
+    /// Scopes Microsoft granted at the last refresh, for setup checks.
+    granted: Option<String>,
 }
 #[derive(Debug)]
 pub struct Throttled(pub u64);
@@ -24,12 +26,22 @@ impl std::fmt::Display for Throttled {
     }
 }
 impl std::error::Error for Throttled {}
+/// The saved delta cursor is no longer valid; that folder restarts from its initial query.
+#[derive(Debug)]
+pub struct CursorExpired;
+impl std::fmt::Display for CursorExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Microsoft sync cursor expired; restarting that folder")
+    }
+}
+impl std::error::Error for CursorExpired {}
 impl Graph {
     pub fn new() -> Result<Self> {
         Ok(Self {
             client: crate::auth::http_client(20_000)?,
             token: None,
             base: Url::parse("https://graph.microsoft.com/v1.0/")?,
+            granted: None,
         })
     }
     fn url(&self, parts: &[&str]) -> Url {
@@ -105,9 +117,19 @@ impl Graph {
             .send()
             .context("Microsoft token refresh failed")?;
         if !response.status().is_success() {
-            bail!("Microsoft session expired or consent missing; repeat account auth");
+            bail!(
+                "Microsoft session expired or consent missing{}; repeat account auth",
+                crate::auth::microsoft_detail(response)
+            );
         }
         let mut value = crate::auth::response_json(response)?;
+        self.granted = value["scope"].as_str().map(|scope| {
+            scope
+                .split_whitespace()
+                .map(|s| s.trim_start_matches("https://graph.microsoft.com/"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
         let token = Zeroizing::new(
             value["access_token"]
                 .as_str()
@@ -169,9 +191,10 @@ impl Graph {
         if let Some(body) = body {
             request = request.json(&body);
         }
-        request
-            .send()
-            .map_err(|_| anyhow::anyhow!("Microsoft connection interrupted"))
+        // Keep the transport error (without its URL) so callers can tell "never connected" apart.
+        request.send().map_err(|e| {
+            anyhow::Error::new(e.without_url()).context("Microsoft connection interrupted")
+        })
     }
     fn check(&mut self, response: Response) -> Result<Response> {
         let status = response.status();
@@ -188,16 +211,33 @@ impl Graph {
                 .unwrap_or(60);
             return Err(Throttled(seconds).into());
         }
-        if status.as_u16() == 403 {
-            bail!("Microsoft refused permission; verify delegated scopes and tenant consent");
+        if status.is_success() {
+            return Ok(response);
         }
         if status.as_u16() == 410 {
-            bail!("Microsoft sync cursor expired; reset the account cursor explicitly");
+            return Err(CursorExpired.into());
         }
-        if !status.is_success() {
-            bail!("Microsoft request failed (HTTP {})", status.as_u16());
+        let value = crate::auth::response_json(response).unwrap_or_default();
+        let detail = crate::auth::microsoft_error(&value);
+        // Outlook can report an expired delta token as 400 with a sync-state code instead of 410.
+        if status.as_u16() == 400
+            && value["error"]["code"].as_str().is_some_and(|code| {
+                let code = code.to_ascii_lowercase();
+                code.contains("syncstate") || code.contains("resync")
+            })
+        {
+            return Err(CursorExpired.into());
         }
-        Ok(response)
+        let detail = detail.map_or_else(String::new, |d| format!(" · {d}"));
+        if status.as_u16() == 403 {
+            bail!(
+                "Microsoft refused permission{detail}; verify delegated scopes and tenant consent"
+            );
+        }
+        bail!(
+            "Microsoft request failed (HTTP {}{detail})",
+            status.as_u16()
+        )
     }
     fn get(&mut self, account: &AccountConfig, url: Url) -> Result<Value> {
         let response = self.request(account, Method::GET, url, None)?;
@@ -223,24 +263,16 @@ impl Graph {
         let mut catching_up = false;
         for folder in folders {
             let old = cursor[&folder].as_str();
-            let url = if let Some(url) = old {
-                self.continuation(url)?
-            } else {
-                let mut url = self.url(&["me", "mailFolders", &folder, "messages", "delta"]);
-                let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-                url.query_pairs_mut().append_pair("$select","id,from,replyTo,subject,body,receivedDateTime,isRead,internetMessageId,hasAttachments").append_pair("$filter",&format!("receivedDateTime ge {since}"));
-                url
+            let url = match old {
+                Some(url) => self.continuation(url)?,
+                None => self.initial_mail_url(&folder),
             };
             let value = match self.get(account, url) {
                 Ok(v) => v,
-                Err(e) if old.is_some() && e.to_string().contains("cursor expired") => {
-                    // Persist a reset only alongside data from the next successful page.
-                    let mut reset = cursor.clone();
-                    reset
-                        .as_object_mut()
-                        .expect("cursor object")
-                        .remove(&folder);
-                    return self.mail(account, reset);
+                // Restart only this folder; earlier folders keep this pass's items and cursors,
+                // and the reset is saved only with the restarted folder's first page.
+                Err(e) if old.is_some() && e.is::<CursorExpired>() => {
+                    self.get(account, self.initial_mail_url(&folder))?
                 }
                 Err(e) => return Err(e),
             };
@@ -272,6 +304,182 @@ impl Graph {
             .into(),
         })
     }
+    /// First delta query for a folder: the last week, with the fields the feed uses.
+    fn initial_mail_url(&self, folder: &str) -> Url {
+        let mut url = self.url(&["me", "mailFolders", folder, "messages", "delta"]);
+        // Whole seconds with Z: Graph's OData date parser rejects nanosecond fractions.
+        let since = (chrono::Utc::now() - chrono::Duration::days(7))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        url.query_pairs_mut()
+            .append_pair(
+                "$select",
+                "id,from,replyTo,subject,body,receivedDateTime,isRead,internetMessageId,hasAttachments",
+            )
+            .append_pair("$filter", &format!("receivedDateTime ge {since}"));
+        url
+    }
+    fn chat_messages_url(&self, chat: &str, high: &str) -> Url {
+        let mut url = self.url(&["chats", chat, "messages"]);
+        url.query_pairs_mut()
+            .append_pair("$top", "50")
+            .append_pair("$orderby", "lastModifiedDateTime desc");
+        if !high.is_empty() {
+            url.query_pairs_mut()
+                .append_pair("$filter", &format!("lastModifiedDateTime gt {high}"));
+        }
+        url
+    }
+    /// Read-only setup check: sign in, then the folders or chats this account would sync.
+    pub fn probe(&mut self, account: &AccountConfig) -> Vec<check::Step> {
+        use check::Step;
+        let mut steps = vec![];
+        if let Err(e) = self.token(account) {
+            steps.push(Step::failed("Sign in", e));
+            return steps;
+        }
+        let mut signed_in = format!("Signed in as {}", account.username);
+        if let Some(granted) = &self.granted {
+            signed_in.push_str(&format!(" · granted {granted}"));
+        }
+        steps.push(Step::ok("Sign in", signed_in));
+        if account.provider == Provider::Teams {
+            self.probe_chats(account, &mut steps);
+        } else {
+            self.probe_mail(account, &mut steps);
+        }
+        steps
+    }
+    fn probe_mail(&mut self, account: &AccountConfig, steps: &mut Vec<check::Step>) {
+        use check::Step;
+        let mut url = self.url(&["me", "mailFolders"]);
+        url.query_pairs_mut()
+            .append_pair("$select", "id,displayName,unreadItemCount")
+            .append_pair("$top", "100");
+        steps.push(match self.get(account, url) {
+            Ok(value) => {
+                let folders: Vec<_> = value["value"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|f| {
+                        format!(
+                            "{} ({} unread)",
+                            f["displayName"].as_str().unwrap_or("?"),
+                            f["unreadItemCount"].as_u64().unwrap_or(0)
+                        )
+                    })
+                    .collect();
+                Step::ok("Folders", format!("{} folders", folders.len())).with_items(folders)
+            }
+            Err(e) => Step::failed("Folders", e),
+        });
+        let folders = if account.resources.is_empty() {
+            vec!["inbox".to_owned()]
+        } else {
+            account.resources.clone()
+        };
+        for folder in &folders {
+            let mut url = self.url(&["me", "mailFolders", folder]);
+            url.query_pairs_mut()
+                .append_pair("$select", "displayName,totalItemCount");
+            let name = format!("Folder {folder}");
+            steps.push(match self.get(account, url) {
+                Ok(value) => Step::ok(
+                    name,
+                    format!(
+                        "{} · {} messages",
+                        value["displayName"].as_str().unwrap_or(folder),
+                        value["totalItemCount"].as_u64().unwrap_or(0)
+                    ),
+                ),
+                Err(e) => Step::failed(name, e),
+            });
+        }
+        // The exact first query sync sends, so a rejected filter shows up here.
+        let url = self.initial_mail_url(&folders[0]);
+        steps.push(match self.get(account, url) {
+            Ok(value) => Step::ok(
+                "Mail sync query",
+                format!(
+                    "accepted · {} messages from the last week on the first page",
+                    value["value"].as_array().map_or(0, Vec::len)
+                ),
+            ),
+            Err(e) => Step::failed("Mail sync query", e),
+        });
+    }
+    fn probe_chats(&mut self, account: &AccountConfig, steps: &mut Vec<check::Step>) {
+        use check::Step;
+        let mut url = self.url(&["me", "chats"]);
+        url.query_pairs_mut()
+            .append_pair("$select", "id,topic,chatType")
+            .append_pair("$expand", "members")
+            .append_pair("$top", "50");
+        steps.push(match self.get(account, url) {
+            Ok(value) => {
+                let chats: Vec<_> = value["value"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|chat| {
+                        let others: Vec<_> = chat["members"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|m| {
+                                !m["email"]
+                                    .as_str()
+                                    .is_some_and(|e| e.eq_ignore_ascii_case(&account.username))
+                            })
+                            .filter_map(|m| m["displayName"].as_str())
+                            .collect();
+                        let label = chat["topic"]
+                            .as_str()
+                            .filter(|t| !t.is_empty())
+                            .map_or_else(|| others.join(", "), str::to_owned);
+                        format!(
+                            "{label} · {} · {}",
+                            chat["chatType"].as_str().unwrap_or("chat"),
+                            chat["id"].as_str().unwrap_or("?")
+                        )
+                    })
+                    .collect();
+                Step::ok(
+                    "Chats",
+                    format!(
+                        "{} recent chats · add IDs to resources to sync them",
+                        chats.len()
+                    ),
+                )
+                .with_items(chats)
+            }
+            Err(e) => Step::failed("Chats", e),
+        });
+        if account.resources.is_empty() {
+            steps.push(Step::failed(
+                "Synced chats",
+                "None selected; add chat IDs from the list to resources",
+            ));
+        }
+        // The exact query sync sends, including its filter.
+        let since = (chrono::Utc::now() - chrono::Duration::days(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        for chat in &account.resources {
+            let name = format!("Chat {chat}");
+            steps.push(
+                match self.get(account, self.chat_messages_url(chat, &since)) {
+                    Ok(value) => Step::ok(
+                        name,
+                        format!(
+                            "readable · {} messages changed in the last day",
+                            value["value"].as_array().map_or(0, Vec::len)
+                        ),
+                    ),
+                    Err(e) => Step::failed(name, e),
+                },
+            );
+        }
+    }
     fn chats(&mut self, account: &AccountConfig, mut cursor: Value) -> Result<Batch> {
         if account.resources.is_empty() {
             bail!("Add Teams chat IDs to account resources; channel sync is not implemented");
@@ -291,15 +499,7 @@ impl Graph {
             let url = if let Some(next) = saved["next"].as_str() {
                 self.continuation(next)?
             } else {
-                let mut url = self.url(&["chats", chat, "messages"]);
-                url.query_pairs_mut()
-                    .append_pair("$top", "50")
-                    .append_pair("$orderby", "lastModifiedDateTime desc");
-                if !high.is_empty() {
-                    url.query_pairs_mut()
-                        .append_pair("$filter", &format!("lastModifiedDateTime gt {high}"));
-                }
-                url
+                self.chat_messages_url(chat, &high)
             };
             let value = self.get(account, url)?;
             for message in value["value"]
@@ -394,6 +594,13 @@ impl Graph {
         }
         match self.request(account, Method::POST, url, Some(body)) {
             Ok(response) if response.status().as_u16() == expected => SendResult::Accepted,
+            // Never connected (DNS, refused, TLS handshake): nothing reached Microsoft.
+            Err(e)
+                if e.downcast_ref::<reqwest::Error>()
+                    .is_some_and(reqwest::Error::is_connect) =>
+            {
+                SendResult::Failed("Could not reach Microsoft; reply not sent".into())
+            }
             Ok(response) if response.status().is_client_error() => {
                 let _ = self.check(response);
                 SendResult::Failed(
@@ -590,6 +797,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(60),
             )),
             base,
+            granted: None,
         }
     }
     #[test]
@@ -795,5 +1003,181 @@ mod tests {
         let requests = requests.lock().unwrap();
         assert!(requests[0].contains("grant_type=refresh_token"));
         assert!(requests[1].starts_with("GET /v1.0/me "));
+    }
+    fn mail_value(id: &str) -> Value {
+        serde_json::json!({"id":id,"from":{"emailAddress":{"address":"sender@example.invalid"}},"subject":id,"receivedDateTime":"2026-10-18T10:00:00Z","isRead":false,"body":{"contentType":"text","content":"Fictional"}})
+    }
+    #[test]
+    fn an_expired_folder_cursor_restarts_only_that_folder_and_keeps_earlier_items() {
+        let mut a = account(Provider::Office365);
+        a.resources = vec!["inbox".into(), "archive".into()];
+        for expired in [
+            (410, serde_json::json!({})),
+            // Outlook's alternative: 400 with a sync-state error code.
+            (
+                400,
+                serde_json::json!({"error":{"code":"SyncStateNotFound","message":"Sync state not found"}}),
+            ),
+        ] {
+            let (base, requests, server) = server(vec![
+                (
+                    200,
+                    serde_json::json!({"value":[mail_value("kept")],"@odata.deltaLink":"__BASE__inbox-next"}),
+                    None,
+                ),
+                (expired.0, expired.1, None),
+                (
+                    200,
+                    serde_json::json!({"value":[mail_value("restarted")],"@odata.deltaLink":"__BASE__archive-new"}),
+                    None,
+                ),
+            ]);
+            let cursor = serde_json::json!({
+                "inbox": format!("{base}inbox-old"),
+                "archive": format!("{base}archive-old"),
+            });
+            let mut graph = graph(base.clone(), &a);
+            let batch = graph.sync(&a, cursor).unwrap();
+            server.join().unwrap();
+            let subjects: Vec<_> = batch.items.iter().map(|i| i.subject.as_str()).collect();
+            assert_eq!(subjects.len(), 2, "{subjects:?}");
+            assert!(subjects.contains(&"kept") && subjects.contains(&"restarted"));
+            assert_eq!(batch.cursor["inbox"], format!("{base}inbox-next"));
+            assert_eq!(batch.cursor["archive"], format!("{base}archive-new"));
+            // The restart is a fresh query whose date has whole seconds and a Z suffix.
+            let restart = requests.lock().unwrap()[2]
+                .lines()
+                .next()
+                .unwrap()
+                .to_owned();
+            assert!(restart.starts_with("GET /v1.0/me/mailFolders/archive/messages/delta?"));
+            let date = restart
+                .split("receivedDateTime+ge+")
+                .nth(1)
+                .and_then(|rest| rest.split(' ').next())
+                .unwrap();
+            assert_eq!(date.len(), "2026-10-11T03%3A03%3A00Z".len(), "{date}");
+            assert!(date.ends_with('Z') && !date.contains('.'), "{date}");
+        }
+    }
+    #[test]
+    fn microsoft_explanations_reach_the_status_without_controls_or_trace_ids() {
+        let token_error = serde_json::json!({"error":"invalid_client","error_description":"AADSTS700016: Application with identifier 'x' was not found.\r\nTrace ID: 123\r\nCorrelation ID: 456"});
+        assert_eq!(
+            crate::auth::microsoft_error(&token_error).unwrap(),
+            "AADSTS700016: Application with identifier 'x' was not found."
+        );
+        let graph_error = serde_json::json!({"error":{"code":"ErrorAccessDenied","message":"Access is denied.\u{1b}[31m"}});
+        let detail = crate::auth::microsoft_error(&graph_error).unwrap();
+        assert!(detail.starts_with("ErrorAccessDenied: Access is denied."));
+        assert!(!detail.contains('\u{1b}'));
+        let long = serde_json::json!({"error":{"code":"X","message":"y".repeat(500)}});
+        assert!(crate::auth::microsoft_error(&long).unwrap().chars().count() <= 201);
+        assert!(crate::auth::microsoft_error(&serde_json::json!({})).is_none());
+
+        let (base, _, server) = server(vec![(403, graph_error, None)]);
+        let mut graph = graph(base.clone(), &a_teams());
+        let error = graph.get(&a_teams(), base).unwrap_err().to_string();
+        server.join().unwrap();
+        assert!(error.contains("ErrorAccessDenied"), "{error}");
+        assert!(error.contains("tenant consent"), "{error}");
+    }
+    fn a_teams() -> AccountConfig {
+        account(Provider::Teams)
+    }
+    #[test]
+    fn a_send_that_never_connects_fails_instead_of_becoming_uncertain() {
+        let a = account(Provider::Office365);
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = Url::parse(&format!("http://{}/v1.0/", closed.local_addr().unwrap())).unwrap();
+        drop(closed);
+        let mut graph = graph(base, &a);
+        let item = mail_item(&a, &mail_value("never")).unwrap().unwrap();
+        let op = Submission {
+            operation: 1,
+            draft: crate::composer::Draft {
+                target: item.message(MessageId(1), &a).target.unwrap(),
+                body: "Fictional reply".into(),
+                attachments: vec![],
+                revision: 1,
+            },
+        };
+        assert!(matches!(graph.send(&a, &item, &op), SendResult::Failed(_)));
+    }
+    #[test]
+    fn mail_probe_reports_folders_the_synced_folder_and_the_real_sync_query() {
+        let a = account(Provider::Office365);
+        let (base, requests, server) = server(vec![
+            (
+                200,
+                serde_json::json!({"value":[{"id":"1","displayName":"Inbox","unreadItemCount":3},{"id":"2","displayName":"Archive","unreadItemCount":0}]}),
+                None,
+            ),
+            (
+                200,
+                serde_json::json!({"displayName":"Inbox","totalItemCount":120}),
+                None,
+            ),
+            (
+                200,
+                serde_json::json!({"value":[mail_value("a")],"@odata.deltaLink":"__BASE__d"}),
+                None,
+            ),
+        ]);
+        let steps = graph(base, &a).probe(&a);
+        server.join().unwrap();
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(
+            steps[1].items,
+            vec!["Inbox (3 unread)", "Archive (0 unread)"]
+        );
+        assert_eq!(steps[2].detail, "Inbox · 120 messages");
+        assert!(steps[3].detail.contains("1 messages"));
+        let requests = requests.lock().unwrap();
+        assert!(requests.iter().all(|r| r.starts_with("GET ")), "read-only");
+        assert!(requests[2].contains("/messages/delta?"));
+    }
+    #[test]
+    fn teams_probe_lists_chats_by_people_and_flags_missing_or_refused_chats() {
+        let mut a = account(Provider::Teams);
+        let chats = serde_json::json!({"value":[
+            {"id":"19:abc@unq.gbl.spaces","chatType":"oneOnOne","topic":null,"members":[
+                {"displayName":"Owner","email":"OWNER@example.invalid"},
+                {"displayName":"Jules","email":"jules@example.invalid"}]},
+            {"id":"19:team@thread.v2","chatType":"group","topic":"Launch","members":[]}
+        ]});
+        let (base, _, server) = server(vec![(200, chats.clone(), None)]);
+        let steps = graph(base, &a).probe(&a);
+        server.join().unwrap();
+        assert_eq!(
+            steps[1].items,
+            vec![
+                "Jules · oneOnOne · 19:abc@unq.gbl.spaces",
+                "Launch · group · 19:team@thread.v2"
+            ]
+        );
+        assert!(!steps[2].ok && steps[2].name == "Synced chats");
+
+        a.resources = vec!["19:team@thread.v2".into()];
+        let refused =
+            serde_json::json!({"error":{"code":"Forbidden","message":"Missing scope permissions"}});
+        let (base, requests, server) = self::server(vec![(200, chats, None), (403, refused, None)]);
+        let steps = graph(base, &a).probe(&a);
+        server.join().unwrap();
+        let chat = steps.last().unwrap();
+        assert!(
+            !chat.ok && chat.detail.contains("Missing scope permissions"),
+            "{chat:?}"
+        );
+        let query = requests.lock().unwrap()[1]
+            .lines()
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(
+            query.contains("/chats/19:team@thread.v2/messages?"),
+            "{query}"
+        );
+        assert!(query.contains("lastModifiedDateTime+gt+"), "{query}");
     }
 }

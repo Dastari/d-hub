@@ -215,6 +215,11 @@ enum AccountAction {
     Forget {
         id: String,
     },
+    /// Read-only connection check: sign-in, folders or chats, and the sync query. Lists Teams
+    /// chat IDs. Nothing is synced, marked read or sent.
+    Test {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -233,15 +238,42 @@ fn store_secret(reference: &str, stdin: bool) -> Result<()> {
     d_hub::auth::SecretService.store(reference, &secret)
 }
 
+/// The service to edit settings through. Without --socket or --config this is the live service:
+/// once its database exists it owns settings, and the TOML file is only the first-run seed.
+fn control_client(
+    config: Option<&std::path::Path>,
+    socket: Option<&std::path::Path>,
+) -> Result<Option<d_hub::ipc::Client>> {
+    use d_hub::ipc::{Client, Role};
+    if let Some(socket) = socket {
+        return Client::connect(socket, Role::Control).map(Some);
+    }
+    if config.is_some() {
+        return Ok(None);
+    }
+    let Ok(live) = d_hub::ipc::default_live_socket() else {
+        return Ok(None);
+    };
+    if let Ok(client) = Client::connect(&live, Role::Control) {
+        return Ok(Some(client));
+    }
+    if d_hub::startup::data_directory()?
+        .join("service.sqlite3")
+        .exists()
+    {
+        bail!(
+            "the live service owns settings but is not running; launch d-hub (which starts it) and retry, or pass --config PATH to edit the first-run seed file"
+        );
+    }
+    Ok(None)
+}
+
 fn settings_location(
     config: Option<PathBuf>,
     socket: Option<PathBuf>,
 ) -> Result<(Settings, PathBuf, Option<d_hub::ipc::Client>)> {
+    let client = control_client(config.as_deref(), socket.as_deref())?;
     let path = config.map(Ok).unwrap_or_else(config::default_path)?;
-    let client = socket
-        .as_deref()
-        .map(|p| d_hub::ipc::Client::connect(p, d_hub::ipc::Role::Control))
-        .transpose()?;
     let settings = if let Some(client) = &client {
         client.snapshot.settings.clone()
     } else {
@@ -365,10 +397,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Config { action, socket } => {
-            let mut service = socket
-                .as_deref()
-                .map(|p| d_hub::ipc::Client::connect(p, d_hub::ipc::Role::Control))
-                .transpose()?;
+            let mut service = control_client(cli.config.as_deref(), socket.as_deref())?;
             let path = cli.config.map(Ok).unwrap_or_else(config::default_path)?;
             let mut settings = service
                 .as_ref()
@@ -559,6 +588,28 @@ fn run(cli: Cli) -> Result<()> {
                     eprintln!(
                         "Account metadata removed; use account forget before removal to erase stored credentials."
                     );
+                }
+                AccountAction::Test { id } => {
+                    let account = settings
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == id)
+                        .context("unknown account")?;
+                    let steps = d_hub::providers::check::run(account);
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&steps)?);
+                    } else {
+                        for step in &steps {
+                            let mark = if step.ok { "✓" } else { "✗" };
+                            println!("{mark} {} · {}", step.name, step.detail);
+                            for item in &step.items {
+                                println!("    {item}");
+                            }
+                        }
+                    }
+                    if steps.iter().any(|s| !s.ok) {
+                        bail!("{} check(s) failed", steps.iter().filter(|s| !s.ok).count());
+                    }
                 }
                 AccountAction::Auth { id, secret_stdin } => {
                     let account = settings

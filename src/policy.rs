@@ -130,6 +130,10 @@ fn default_poll_seconds() -> u64 {
 fn default_tenant() -> String {
     "organizations".into()
 }
+/// The owner's work Entra app registration (single-tenant, public client flows). Both values are
+/// public identifiers, not credentials; new Microsoft accounts start with them and may override.
+pub const BUILT_IN_MICROSOFT_CLIENT_ID: &str = "67441acc-d050-453d-bfe3-cb6234d1efb1";
+pub const BUILT_IN_MICROSOFT_TENANT: &str = "afa5c75a-9ba4-40d3-849e-b36efb2fc71f";
 fn default_discord_mode() -> String {
     "personal".into()
 }
@@ -139,6 +143,7 @@ fn discord_app() -> String {
 
 impl AccountConfig {
     pub fn new(id: &str, provider: Provider) -> Self {
+        let microsoft = matches!(provider, Provider::Office365 | Provider::Teams);
         Self {
             id: id.into(),
             name: String::new(),
@@ -147,8 +152,16 @@ impl AccountConfig {
             allow_send: false,
             poll_seconds: default_poll_seconds(),
             username: String::new(),
-            tenant: default_tenant(),
-            client_id: String::new(),
+            tenant: if microsoft {
+                BUILT_IN_MICROSOFT_TENANT.into()
+            } else {
+                default_tenant()
+            },
+            client_id: if microsoft {
+                BUILT_IN_MICROSOFT_CLIENT_ID.into()
+            } else {
+                String::new()
+            },
             resources: vec![],
             allow_ai: false,
             discord_mode: default_discord_mode(),

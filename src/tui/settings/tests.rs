@@ -291,7 +291,7 @@ fn pages_fill_tall_windows_and_keep_the_selected_row_visible_when_resized() {
         open(&mut app, page);
         for index in 0..items(&app).len() {
             app.setting_index = index;
-            for (width, height) in [(28, 20), (40, 65), (120, 45), (28, 16)] {
+            for (width, height) in [(28, 20), (40, 72), (120, 45), (28, 16)] {
                 let output = super::super::snapshot(&mut app, width, height).unwrap();
                 assert!(output.contains('›'), "selection hidden at {width}x{height}");
                 assert_eq!(output.lines().count(), height as usize);
@@ -299,7 +299,7 @@ fn pages_fill_tall_windows_and_keep_the_selected_row_visible_when_resized() {
         }
     }
     open(&mut app, SettingsPage::Account("work-chat".into()));
-    let tall = super::super::snapshot(&mut app, 40, 65).unwrap();
+    let tall = super::super::snapshot(&mut app, 40, 72).unwrap();
     assert!(
         tall.contains("Remove account"),
         "tall windows show the whole page"
@@ -410,4 +410,50 @@ fn wrapping_preserves_unicode_clusters_and_limits_long_value_previews() {
     assert!(summary.width() <= 24 && summary.ends_with('…'));
     assert_eq!(preview("", 24), "Not set");
     assert_eq!(preview("hello\nworld", 24), "hello ↵");
+}
+
+#[test]
+fn connection_checks_are_offered_for_mail_and_teams_and_results_show_on_the_page() {
+    use crate::providers::check::Step;
+    let mut app = settings_app();
+    app.settings
+        .add_account("work-chat", Provider::Teams)
+        .unwrap();
+    app.settings
+        .add_account("discord", Provider::Discord)
+        .unwrap();
+    open(&mut app, SettingsPage::Account("discord".into()));
+    assert!(
+        !items(&app)
+            .iter()
+            .any(|i| matches!(i, Item::Action(Action::Test(_))))
+    );
+    open(&mut app, SettingsPage::Account("work-chat".into()));
+    let test = Item::Action(Action::Test("work-chat".into()));
+    select(&mut app, &test);
+    // The offline demo never connects, even on request.
+    press(&mut app, KeyCode::Enter);
+    assert!(app.check_job.is_none());
+    assert!(app.notice.contains("offline demo"));
+
+    app.account_checks.insert(
+        "work-chat".into(),
+        vec![
+            Step::ok("Sign in", "Signed in as owner@example.invalid"),
+            Step::ok("Chats", "2 recent chats")
+                .with_items(vec!["Jules · oneOnOne · 19:abc@unq.gbl.spaces".into()]),
+            Step::failed(
+                "Synced chats",
+                "None selected; add chat IDs from the list to resources",
+            ),
+        ],
+    );
+    let frame = super::super::snapshot(&mut app, 110, 40).unwrap();
+    assert!(
+        frame.contains("✓ Sign in · Signed in as owner@example.invalid"),
+        "{frame}"
+    );
+    assert!(frame.contains("19:abc@unq.gbl.spaces"));
+    assert!(frame.contains("✗ Synced chats"));
+    assert!(frame.contains("Test connection"));
 }

@@ -97,7 +97,7 @@ cargo run --locked -- config --socket ./service-demo/run/service.sock set reply_
 cargo run --locked -- service --socket ./service-demo/run/service.sock stop
 ```
 
-Without `--socket`, drawer/service commands use `$XDG_RUNTIME_DIR/d-hub/service-live.sock`. The demo daemon defaults to service-demo.sock; use an explicit demo socket as above. Existing demo JSON in the selected data directory is imported once and retained as a backup; SQLite then owns session state, settings, revisions and the mock outbox. Initial settings come from the profile TOML or explicit global `--config`. While using the service, edit settings through the drawer or `config --socket`; standalone TOML changes do not overwrite service-owned preferences. `config --socket … export` produces portable TOML/JSON through the same typed schema.
+Without `--socket`, drawer/service commands use `$XDG_RUNTIME_DIR/d-hub/service-live.sock`. So do config/account/profile commands without `--config`; they refuse while a live profile exists but its service is stopped. `d-hub account test ID` runs a read-only connection check. The demo daemon defaults to service-demo.sock; use an explicit demo socket as above. Existing demo JSON in the selected data directory is imported once and retained as a backup; SQLite then owns session state, settings, revisions and the mock outbox. Initial settings come from the profile TOML or explicit global `--config`. While using the service, edit settings through the drawer or `config --socket`; standalone TOML changes do not overwrite service-owned preferences. `config --socket … export` produces portable TOML/JSON through the same typed schema.
 
 Acknowledged edits survive restart. An interrupted submission becomes uncertain and cannot automatically resend. If the socket disconnects, the drawer freezes edits/sends and writes unacknowledged work to a private recovery file, whose path is shown on exit. After restarting the service, use `drawer --socket PATH --recover RECOVERY_FILE` to restore unsent active/saved drafts. Recovery retains the file, refuses conflicting drafts and unresolved sends, and never replays a send or restores settings implicitly.
 
@@ -119,14 +119,14 @@ cargo run --locked -- account add icloud home-mail
 cargo run --locked -- account add icloud --name 'Old address'   # ID icloud, then icloud-2, …
 cargo run --locked -- account rename home-mail 'Home mail'
 cargo run --locked -- account auth home-mail
-cargo run --locked -- account add office365 work-mail
-cargo run --locked -- config set accounts.work-mail.client_id YOUR_PUBLIC_APP_ID
+cargo run --locked -- account add office365 work-mail   # starts with the built-in work app ID and tenant
 cargo run --locked -- account auth work-mail
+cargo run --locked -- account test work-mail
 cargo run --locked -- config set ai.provider jev
 cargo run --locked -- ai-auth
 ```
 
-Credentials use the desktop Secret Service through `secret-tool` (Arch package `libsecret`); unlock your keyring first. No secret arguments or credentials in TOML. Microsoft requires a registered public-client app and tenant consent. The live service connects explicitly enabled mail/Teams accounts. Personal Discord setup uses a QR screen and keyring storage; DM transport remains pending. AI is off globally and per account by default. To opt in, set `ai.enabled true` and `accounts.ACCOUNT.allow_ai true`; the live daemon and explicitly launched notification feed schedule real decisions. Demo remains offline regardless of these settings. Attachment bytes are never sent for classification.
+Credentials use the desktop Secret Service through `secret-tool` (Arch package `libsecret`); unlock your keyring first. No secret arguments or credentials in TOML. Microsoft requires a public-client app registration and tenant consent; new Microsoft accounts default to the owner's work registration (docs/LIVE_SETUP.md). The live service connects explicitly enabled mail/Teams accounts. Personal Discord setup uses a QR screen and keyring storage; DM transport remains pending. AI is off globally and per account by default. To opt in, set `ai.enabled true` and `accounts.ACCOUNT.allow_ai true`; the live daemon and explicitly launched notification feed schedule real decisions. Demo remains offline regardless of these settings. Attachment bytes are never sent for classification.
 
 For the **optional interim** Discord bridge, keep the official desktop client running with message previews and desktop notifications enabled:
 

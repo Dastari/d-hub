@@ -25,8 +25,11 @@ fn connect(account: &AccountConfig, password: &str) -> Result<Session> {
         .map_err(|_| anyhow::anyhow!("iCloud TLS validation failed"))?;
     let mut client = imap::Client::new(tls);
     client.read_greeting().context("iCloud greeting failed")?;
-    client.login(&account.username, password).map_err(|_| {
-        anyhow::anyhow!("iCloud login refused; check app-specific password and username")
+    client.login(&account.username, password).map_err(|(e, _)| {
+        anyhow::anyhow!(
+            "iCloud login refused ({}); check app-specific password and username",
+            crate::domain::safe_text(&e.to_string())
+        )
     })
 }
 fn body(part: &mailparse::ParsedMail<'_>, wanted: &str) -> Option<String> {
@@ -108,6 +111,70 @@ pub fn parse(
         partial: false,
     })
 }
+/// Read-only: sign in, list folders, examine the synced ones and test SMTP sign-in.
+pub fn check(account: &AccountConfig, password: &str) -> Vec<check::Step> {
+    let mut steps = match connect(account, password) {
+        Ok(mut session) => {
+            let mut steps = vec![check::Step::ok(
+                "Sign in",
+                format!("{HOST} accepted {}", account.username),
+            )];
+            steps.extend(check_session(account, &mut session));
+            let _ = session.logout();
+            steps
+        }
+        Err(e) => return vec![check::Step::failed("Sign in", e)],
+    };
+    steps.push(check_smtp(account, password));
+    steps
+}
+fn check_session<T: std::io::Read + std::io::Write>(
+    account: &AccountConfig,
+    session: &mut imap::Session<T>,
+) -> Vec<check::Step> {
+    let mut steps = vec![];
+    match session.list(None, Some("*")) {
+        Ok(names) => {
+            let names: Vec<_> = names.iter().map(|n| n.name().to_owned()).collect();
+            steps.push(
+                check::Step::ok("Folders", format!("{} folders", names.len())).with_items(names),
+            );
+        }
+        Err(e) => steps.push(check::Step::failed("Folders", e)),
+    }
+    let folders = if account.resources.is_empty() {
+        vec!["INBOX".to_owned()]
+    } else {
+        account.resources.clone()
+    };
+    for folder in folders {
+        let name = format!("Folder {folder}");
+        steps.push(match session.examine(&folder) {
+            Ok(mailbox) => check::Step::ok(name, format!("{} messages", mailbox.exists)),
+            Err(e) => check::Step::failed(name, format!("{e}; check the folder name")),
+        });
+    }
+    steps
+}
+/// EHLO, STARTTLS and AUTH, then QUIT; no message is submitted.
+fn check_smtp(account: &AccountConfig, password: &str) -> check::Step {
+    let transport = match lettre::SmtpTransport::starttls_relay("smtp.mail.me.com") {
+        Ok(t) => t
+            .port(587)
+            .timeout(Some(Duration::from_secs(20)))
+            .credentials(lettre::transport::smtp::authentication::Credentials::new(
+                account.username.clone(),
+                password.into(),
+            ))
+            .build(),
+        Err(e) => return check::Step::failed("Sending", e),
+    };
+    match transport.test_connection() {
+        Ok(true) => check::Step::ok("Sending", "smtp.mail.me.com accepted sign-in; nothing sent"),
+        Ok(false) => check::Step::failed("Sending", "smtp.mail.me.com did not respond"),
+        Err(e) => check::Step::failed("Sending", e),
+    }
+}
 pub fn sync(account: &AccountConfig, password: &str, cursor: Value) -> Result<Batch> {
     let mut session = connect(account, password)?;
     let result = sync_session(account, &mut session, cursor);
@@ -132,7 +199,7 @@ fn sync_session<T: std::io::Read + std::io::Write>(
     for folder in folders {
         let mailbox = session
             .select(&folder)
-            .context("iCloud mailbox unavailable")?;
+            .with_context(|| format!("iCloud mailbox {folder:?} unavailable"))?;
         let validity = mailbox.uid_validity.context("iCloud omitted UIDVALIDITY")?;
         let old = &cursor[&folder];
         let reset = old["validity"].as_u64() != Some(validity as u64);
@@ -347,7 +414,10 @@ pub fn build_reply(
                 .into(),
         );
     }
-    Ok(builder.body(submission.draft.body.clone())?)
+    // A bare body has no Content-Type, so readers would assume US-ASCII and garble Unicode.
+    Ok(builder.singlepart(lettre::message::SinglePart::plain(
+        submission.draft.body.clone(),
+    ))?)
 }
 pub fn send(
     account: &AccountConfig,
@@ -401,9 +471,14 @@ fn deliver(transport: &lettre::SmtpTransport, mail: &lettre::Message) -> SendRes
     use lettre::Transport;
     match transport.send(mail) {
         Ok(_) => SendResult::Accepted,
-        Err(e) if e.status().is_some() => SendResult::Failed(
-            "SMTP refused reply; verify account, recipient and server policy".into(),
-        ),
+        Err(e) if e.status().is_some() => SendResult::Failed(format!(
+            "SMTP refused reply ({}); verify account, recipient and server policy",
+            crate::domain::safe_text(&e.to_string())
+        )),
+        // Connecting and the TLS handshake precede any mail data, so nothing was sent.
+        Err(e) if e.is_tls() || e.to_string().starts_with("Connection error") => {
+            SendResult::Failed("Could not reach iCloud mail; reply not sent".into())
+        }
         Err(_) => SendResult::Uncertain,
     }
 }
@@ -451,6 +526,10 @@ mod tests {
         assert!(wire.contains("To: reply@example.invalid"));
         assert!(!wire.contains("To: sender@example.invalid"));
         assert!(wire.contains("References: <earlier@example.invalid> <original@example.invalid>"));
+        assert!(wire.contains("MIME-Version: 1.0"));
+        assert!(wire.contains("Content-Type: text/plain; charset=utf-8"));
+        let parsed = mailparse::parse_mail(wire.as_bytes()).unwrap();
+        assert_eq!(parsed.get_body().unwrap().trim_end(), "Reply 東京");
     }
     #[test]
     fn fake_imap_uses_uids_peek_size_guard_and_detects_uidvalidity_reset() {
@@ -627,6 +706,89 @@ mod tests {
             let body = server.join().unwrap();
             assert!(body.contains("Fictional reply"));
             assert!(body.contains("To: sender@example.invalid"));
+        }
+    }
+    #[test]
+    fn an_smtp_server_that_cannot_be_reached_means_not_sent() {
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let transport = lettre::SmtpTransport::builder_dangerous("127.0.0.1")
+            .port(port)
+            .timeout(Some(Duration::from_secs(2)))
+            .build();
+        let message = lettre::Message::builder()
+            .from("owner@example.invalid".parse().unwrap())
+            .to("friend@example.invalid".parse().unwrap())
+            .body(String::from("Fictional"))
+            .unwrap();
+        assert!(matches!(
+            deliver(&transport, &message),
+            SendResult::Failed(reason) if reason.contains("not sent")
+        ));
+    }
+    #[test]
+    fn the_connection_check_lists_folders_and_examines_without_selecting() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let observed = commands.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            write!(stream, "* OK fictional IMAP\r\n").unwrap();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 {
+                    break;
+                }
+                observed.lock().unwrap().push(line.clone());
+                let tag = line.split_whitespace().next().unwrap().to_owned();
+                let upper = line.to_uppercase();
+                if upper.contains("LIST") {
+                    write!(
+                        stream,
+                        "* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n* LIST (\\HasNoChildren) \"/\" \"Sent Messages\"\r\n"
+                    )
+                    .unwrap();
+                } else if upper.contains("EXAMINE \"INBOX\"") {
+                    write!(stream, "* 42 EXISTS\r\n* OK [UIDVALIDITY 7] validity\r\n").unwrap();
+                } else if upper.contains("EXAMINE") {
+                    write!(stream, "{tag} NO [NONEXISTENT] Unknown Mailbox\r\n").unwrap();
+                    continue;
+                } else if upper.contains("LOGOUT") {
+                    write!(stream, "* BYE\r\n{tag} OK bye\r\n").unwrap();
+                    break;
+                }
+                write!(stream, "{tag} OK complete\r\n").unwrap();
+            }
+        });
+        let mut client = imap::Client::new(TcpStream::connect(address).unwrap());
+        client.read_greeting().unwrap();
+        let mut session = client.login("fictional", "fictional").unwrap();
+        let mut a = account();
+        a.resources = vec!["INBOX".into(), "Archive".into()];
+        let steps = check_session(&a, &mut session);
+        let _ = session.logout();
+        server.join().unwrap();
+        assert!(steps[0].ok);
+        assert_eq!(steps[0].items, vec!["INBOX", "Sent Messages"]);
+        assert_eq!(
+            (steps[1].ok, steps[1].detail.as_str()),
+            (true, "42 messages")
+        );
+        assert!(
+            !steps[2].ok && steps[2].detail.contains("Unknown Mailbox"),
+            "{:?}",
+            steps[2]
+        );
+        // Read-only: EXAMINE, never SELECT, FETCH or STORE.
+        let commands = commands.lock().unwrap().join("").to_uppercase();
+        for forbidden in ["SELECT", "FETCH", "STORE"] {
+            assert!(!commands.contains(forbidden), "{commands}");
         }
     }
 }

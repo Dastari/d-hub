@@ -189,3 +189,20 @@ Follow-up at the owner's request: viewing a chat stack (selection, reply switch,
 ## v0.4.0 publication
 
 [v0.4.0](https://github.com/dastari/d-hub/releases/tag/v0.4.0) is published (settings pages, multiple accounts, stacked feed previews, Ctrl+E dismissal, local times). The [native release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39119547020) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39119547172) passed. Locally, all 153 Rust tests, the four PTY scripts and the installer smoke passed before tagging. Post-publication verification downloaded the public installer into a temporary HOME. It installed the x86_64 asset, which reported d-hub 0.4.0, and the startup/account-setup PTY passed against that installed binary. Temporary data was removed. No owner account, keyring or desktop configuration was accessed.
+
+## Provider hardening and read-only connection checks
+
+An audit of iCloud, Office 365 and Teams against their documented contracts found defects likely to break first contact with real accounts. None of these providers has yet been run against a real account. Fixed and covered by offline tests:
+- iCloud replies lacked MIME-Version and Content-Type, so Unicode replies could be misread as US-ASCII. They are now text/plain UTF-8; a test parses the wire message back to "Reply 東京".
+- The first Office 365 delta filter used a nanosecond RFC 3339 date. It now uses whole seconds with Z, asserted on the wire.
+- An expired cursor on a later mail folder restarted every folder and dropped items already fetched. Now only that folder restarts, earlier items and cursors are kept, and Outlook's 400 SyncStateNotFound is handled like 410.
+- Device login, token refresh and Graph errors discarded Microsoft's explanation. AADSTS and Graph error codes now reach the status, first line only, bounded and without terminal controls; IMAP login and SMTP refusal text and folder names are included. Service status shows the whole error chain.
+- Sends that never connect (DNS, refused, TLS handshake) now fail with the draft retained instead of becoming uncertain. Tested with closed ports for SMTP and Graph.
+- Without --socket, `config`/`account`/`profile` edited a seed TOML file the running service never reads. They now use the running live service and refuse while a live profile exists but its service is stopped; an explicit `--config` still edits a seed file. A live CLI test covers all three cases.
+- Teams chat IDs pasted percent-encoded from web addresses are decoded.
+
+New `d-hub account test ID` and the account page's Test connection run a read-only check. For iCloud: IMAP sign-in, LIST, EXAMINE of synced folders and SMTP sign-in without sending. For Microsoft: sign-in with granted scopes, folders or the 50 most recent chats with people and IDs, and the exact first sync query. Fake-server tests verify the results, the absence of SELECT/FETCH/STORE or non-GET requests, Graph error text and chat listing; the demo refuses to connect. All 163 Rust tests, formatting, warnings-denied Clippy, the four PTY scripts and the installer smoke pass. Real-account acceptance remains the owner's step; see LIVE_SETUP.md.
+
+## Built-in Microsoft registration and v0.4.1
+
+On the owner's direction, new Office 365 and Teams accounts start with the work app registration used by gema-2026: client ID 67441acc-d050-453d-bfe3-cb6234d1efb1 in tenant afa5c75a-9ba4-40d3-849e-b36efb2fc71f. Both are public identifiers, not credentials; the tenant ID is what Microsoft's public OpenID metadata for firstassist.com.au reports. Other providers keep `organizations` and an empty client ID, existing accounts keep their saved values, and both fields stay editable. A CLI test covers the defaults and an override. Whether that registration allows public client flows and grants the delegated Graph scopes has not been checked; device login will report AADSTS7000218 or AADSTS65001 if not. All 164 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass before tagging v0.4.1.

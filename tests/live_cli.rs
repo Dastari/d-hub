@@ -82,3 +82,104 @@ fn empty_live_daemon_exposes_real_mode_and_account_profile_settings_over_ipc() {
     run(&["service", "--socket", path, "stop"]);
     assert!(child.wait().unwrap().success());
 }
+
+#[test]
+fn settings_commands_reach_the_running_live_service_without_flags_and_never_edit_a_dead_seed() {
+    let dir = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    let runtime = dir.path().join("runtime");
+    std::fs::create_dir_all(runtime.join("d-hub")).unwrap();
+    for path in [&runtime, &runtime.join("d-hub")] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let socket = runtime.join("d-hub/service-live.sock");
+    let state = dir.path().join("state");
+    let data = state.join("d-hub/live");
+    let environment = [
+        ("XDG_RUNTIME_DIR", runtime.as_path()),
+        ("XDG_STATE_HOME", state.as_path()),
+        ("XDG_CONFIG_HOME", &dir.path().join("config")),
+        ("HOME", dir.path()),
+    ];
+    let d_hub = |args: &[&str]| {
+        let mut command = Process::new(env!("CARGO_BIN_EXE_d-hub"));
+        command.envs(environment).args(args);
+        command
+    };
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = d_hub(&["daemon", "--live", "--foreground", "--data-dir"])
+        .arg(&data)
+        .arg("--socket")
+        .arg(&socket)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut client = loop {
+        match Client::connect(&socket, Role::Control) {
+            Ok(client) => break client,
+            Err(_) => {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    let output = d_hub(&["account", "add", "teams", "work"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = d_hub(&["config", "set", "accounts.work.tenant", "contoso.example"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot = client.request_snapshot(Command::Poll { after: 0 }).unwrap();
+    let account = &snapshot.settings.accounts[0];
+    assert_eq!(
+        (account.id.as_str(), account.tenant.as_str()),
+        ("work", "contoso.example")
+    );
+    assert!(
+        !dir.path().join("config/d-hub/config.toml").exists(),
+        "the seed file is not what the service reads"
+    );
+    drop(client);
+    let output = d_hub(&["service", "--socket", socket.to_str().unwrap(), "stop"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(child.wait().unwrap().success());
+    // Stopped: refuse rather than silently editing a file the service will never read.
+    let output = d_hub(&["account", "list"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not running"));
+    // An explicit seed file is still editable on request.
+    let seed = dir.path().join("seed.toml");
+    let output = d_hub(&[
+        "--config",
+        seed.to_str().unwrap(),
+        "account",
+        "add",
+        "icloud",
+    ])
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(seed.exists());
+}

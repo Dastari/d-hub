@@ -26,6 +26,7 @@ pub(crate) enum Action {
     AddAccount,
     CreateAccount,
     SignIn(String),
+    Test(String),
     Connect(String),
     Disconnect(String),
     AskRemove(String),
@@ -153,12 +154,15 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
             let mut rows = vec![
                 field(&format!("accounts.{id}.name")),
                 Item::Action(Action::SignIn(id.clone())),
-                Item::Action(if a.enabled {
-                    Action::Disconnect(id.clone())
-                } else {
-                    Action::Connect(id.clone())
-                }),
             ];
+            if a.provider != Provider::Discord {
+                rows.push(Item::Action(Action::Test(id.clone())));
+            }
+            rows.extend([Item::Action(if a.enabled {
+                Action::Disconnect(id.clone())
+            } else {
+                Action::Connect(id.clone())
+            })]);
             rows.extend(
                 account_fields(a)
                     .into_iter()

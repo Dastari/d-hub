@@ -22,7 +22,7 @@ The strict TOML schema remains `schema_version = 1`; older flat configs load wit
 | `ai.threshold`, `.timeout_ms`, `.hold_pending` | 0.6, 5000 (100–30000), false |
 | `accounts` | JSON account list, maximum 32, no secrets; `account add PROVIDER [ID] [--name NAME]`, `:account add [PROVIDER [ID]]` or Settings › Accounts › + Add account creates metadata; omitted IDs use the first free `provider`, `provider-2`, … |
 | `accounts.ID.name` | Empty (shows the ID); optional one-line display name up to 80 bytes, shown in the feed, composer and settings. `account rename ID NAME` / `:account rename ID NAME`. Renaming never changes the ID, credentials, drafts, sync cursors, AI decisions or a running connection |
-| `accounts.ID.username`, `.tenant`, `.client_id`, `.resources` | Empty username, organizations, empty public-client app ID, newline-separated resource IDs |
+| `accounts.ID.username`, `.tenant`, `.client_id`, `.resources` | Empty username; Office 365 and Teams start with the built-in work app registration (other providers: organizations, empty app ID); newline-separated resource IDs |
 | `accounts.ID.enabled`, `.allow_send`, `.poll_seconds` | false, false, 30; opt-in live connections/sends, polling range 15–3600 seconds |
 | `accounts.ID.allow_ai` | false; both this and global AI enablement are required |
 | `accounts.ID.discord_user_id` | Empty until QR setup; verified Discord identity pin, validated as a snowflake |
@@ -108,13 +108,13 @@ Optional Omarchy theme following should read the current desktop theme through a
 
 `daemon --demo --foreground --data-dir DIR [--socket PATH]` creates `DIR/service.sqlite3` with schema/user identity checks, atomic migration, a bounded 256-entry change ledger and mock outbox rows. Directories must be user-owned/private (0700); database, socket and recovery files are 0600. A directory lock excludes concurrent owners; a socket lock and same-user peer checks protect local IPC. The demo daemon defaults to `$XDG_RUNTIME_DIR/d-hub/service-demo.sock`; the live daemon and drawer/service commands default to service-live.sock. Use explicit socket paths for demo clients. Default `d-hub` / `drawer` starts the missing live owner on demand. `--no-start-service` and explicit sockets connect only; no systemd unit is installed.
 
-Service settings initialize from `DIR/config.toml` or global `--config PATH` only for a new database. After that, `config --socket PATH list|get|set|reset|validate|export` talks to its owner; origin is reported as service and an unrelated TOML path is not presented as the active config. Concurrent stale settings edits are rejected rather than replacing another edit.
+Service settings initialize from `DIR/config.toml` or global `--config PATH` only for a new database. After that, `config --socket PATH list|get|set|reset|validate|export` talks to its owner. Without `--socket` or `--config`, config/account/profile/ai-auth use the running default live service. If a live database exists but the service is stopped, they refuse instead of editing the seed file; origin is reported as service and an unrelated TOML path is not presented as the active config. Concurrent stale settings edits are rejected rather than replacing another edit.
 
 On disconnect, the attached drawer preserves active/saved drafts and pending intent in `$XDG_STATE_HOME/d-hub/recovery/drawer-PID-TIME.json` (normal fallback under `~/.local/state`). If neither state/home environment path exists, it uses the private socket directory. `drawer --socket PATH --recover FILE` restores unsent drafts explicitly and retains the source file. It rejects a pending/uncertain send, an invalid target or conflicting existing drafts. Saved setting edits remain available in the recovery file for deliberate review; recovery does not overwrite settings or replay operations. Automatic reconnect is pending.
 
 ## Live provider settings
 
-See [live setup](LIVE_SETUP.md) for enabled/allow_send defaults, account identity pinning, mailbox/chat resources, initial history bounds, provider capabilities and owner setup steps. Live and demo databases cannot change modes. Standalone TOML seeds new profiles only; edit active service preferences through its TUI or `config --socket`. No-subcommand launch opens the live drawer.
+Teams `resources` entries are percent-decoded when set, so chat IDs copied from Teams web addresses work. See [live setup](LIVE_SETUP.md) for enabled/allow_send defaults, account identity pinning, mailbox/chat resources, initial history bounds, provider capabilities and owner setup steps. Live and demo databases cannot change modes. Standalone TOML seeds new profiles only; edit active service preferences through its TUI or `config --socket`. No-subcommand launch opens the live drawer.
 
 ## Production updates
 

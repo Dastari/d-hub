@@ -1,4 +1,5 @@
 //! Provider boundary: credentials/network live only in daemon-owned workers.
+pub mod check;
 pub mod discord;
 pub mod graph;
 pub mod icloud;

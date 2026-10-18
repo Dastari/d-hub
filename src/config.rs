@@ -566,6 +566,10 @@ impl Settings {
                             "username" => a.username = value.into(),
                             "tenant" => a.tenant = value.into(),
                             "client_id" => a.client_id = value.into(),
+                            "resources" if a.provider == crate::domain::Provider::Teams => {
+                                // IDs copied from Teams web addresses arrive percent-encoded.
+                                a.resources = terms().iter().map(|id| percent_decode(id)).collect()
+                            }
                             "resources" => a.resources = terms(),
                             "allow_ai" => a.allow_ai = value.parse()?,
                             "discord_mode" => a.discord_mode = value.into(),
@@ -669,6 +673,29 @@ pub fn setting(name: &str) -> Result<&'static Setting> {
         .find(|s| s.name == name)
         .with_context(|| format!("unknown setting {name}"))
 }
+/// Decodes %XX escapes; anything malformed is kept literally.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%'
+            && let (Some(Some(high)), Some(Some(low))) = (
+                bytes.get(i + 1).map(|b| hex(*b)),
+                bytes.get(i + 2).map(|b| hex(*b)),
+            )
+        {
+            out.push((high * 16 + low) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| value.to_owned())
+}
+
 pub fn default_path() -> Result<PathBuf> {
     let directory = match std::env::var_os("XDG_CONFIG_HOME") {
         Some(v) if !v.is_empty() => PathBuf::from(v),
