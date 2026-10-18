@@ -22,11 +22,21 @@ def main():
         previous = {key: os.environ.get(key) for key in overrides}
         os.environ.update(overrides)
         terminal = None
+        socket = runtime / "d-hub/service-live.sock"
 
         def cli(*arguments, check=True):
             return subprocess.run(
                 [str(BINARY), *arguments], capture_output=True, text=True, check=check
             )
+
+        def stop():
+            cli("service", "stop")
+            # Stop acknowledges before the owner drops its socket guard. Wait for
+            # that cleanup before testing a missing-service diagnostic/restart.
+            deadline = time.monotonic() + 5
+            while socket.exists():
+                assert time.monotonic() < deadline, "stopped service did not remove its socket"
+                time.sleep(0.01)
 
         def snapshot():
             return json.loads(cli("service", "snapshot", "--json").stdout)
@@ -36,7 +46,6 @@ def main():
             terminal.wait(lambda: b"Set up accounts" in terminal.output, "automatic first-launch setup")
             first = snapshot()
             assert first["live"] is True and first["session"]["messages"] == []
-            socket = runtime / "d-hub/service-live.sock"
             inode = socket.stat().st_ino
             database = directory / "state/d-hub/live/service.sqlite3"
             assert database.exists()
@@ -55,14 +64,14 @@ def main():
             assert socket.stat().st_ino == inode  # reuse, no second service
             terminal.close()
             terminal = None
-            cli("service", "stop")
+            stop()
 
             # A stale socket does not require a foreground daemon command from the user.
             terminal = Terminal(["drawer"])
             terminal.wait(lambda: b"LIVE" in terminal.output, "automatic restart")
             terminal.close()
             terminal = None
-            cli("service", "stop")
+            stop()
 
             # Connect-only behavior and noninteractive calls cannot create a hidden service.
             terminal = Terminal(["drawer", "--no-start-service"])

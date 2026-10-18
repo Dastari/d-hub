@@ -52,7 +52,7 @@ To remove a managed installation, close the drawer, stop the service with d-hub 
 
 ## Publishing another production release
 
-Update Cargo.toml and Cargo.lock together, update docs/RELEASE_NOTES.md, commit and push an annotated version tag such as v0.2.3. The Production release workflow verifies the tag/version, tests both native Linux architectures, builds optimized executables, uploads binaries, SHA256SUMS and install.sh to a draft, then publishes the complete release as latest. A failed build leaves the existing latest release available. The workflow also supports manually dispatching an existing tag. Do not republish changed contents under an existing version.
+Update Cargo.toml and Cargo.lock together, update docs/RELEASE_NOTES.md, commit and push an annotated version tag such as v0.2.4. The Production release workflow verifies the tag/version, tests both native Linux architectures, builds optimized executables, uploads binaries, SHA256SUMS and install.sh to a draft, then publishes the complete release as latest. A failed build leaves the existing latest release available. The workflow also supports manually dispatching an existing tag. Do not republish changed contents under an existing version.
 
 GitHub's [release API](https://docs.github.com/en/rest/releases/releases) defines latest-release selection and asset digests; the workflow uses [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create) with draft-first uploads.
 

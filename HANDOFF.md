@@ -67,6 +67,6 @@ The originating Ghostty config includes Shift+Insert paste, Control+Insert copy,
 
 Public repository creation and pushing to the owner's personal `dastari/d-hub` GitHub project are authorised. Do not publish credentials, message caches, personal machine addresses or real message fixtures. No project license has been selected. Real provider setup/sending, desktop configuration and service installation still require their own explicit setup/testing step.
 
-## Existing launcher migration · v0.2.2
+## Existing launcher migration · v0.2.3
 
-The owner encountered the installer's existing ~/.local/bin/d-hub guard while moving from a development installation. The installer now supports explicit --replace after release validation, with unique private launcher backups, atomic symlink replacement and preservation of relative/dangling link targets. The default refusal includes the complete migration command. No owner launcher was visible in this development environment, so do not claim it was migrated directly. See README.md and docs/UPDATES.md; publish v0.2.2 after release CI and record actual verification.
+The owner encountered the installer's existing ~/.local/bin/d-hub guard while moving from a development installation. The installer now supports explicit --replace after release validation, with unique private launcher backups, atomic symlink replacement and preservation of relative/dangling link targets. The default refusal includes the complete migration command. No owner launcher was visible in this development environment, so do not claim it was migrated directly. See README.md and docs/UPDATES.md; publish v0.2.3 after release CI and record actual verification.
