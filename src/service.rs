@@ -62,6 +62,8 @@ pub enum Action {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     #[serde(default)]
+    pub discord_personal_qr_setup: bool,
+    #[serde(default)]
     pub live: bool,
     #[serde(default)]
     pub provider_status: std::collections::BTreeMap<String, String>,
@@ -275,6 +277,7 @@ impl Owner {
                     .first()
                     .is_some_and(|c| c.revision > after.saturating_add(1)));
         Ok(Snapshot {
+            discord_personal_qr_setup: true,
             live: self.live,
             provider_status: self.app.provider_status.clone(),
             revision: self.revision,

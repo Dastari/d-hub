@@ -114,6 +114,8 @@ pub struct AccountConfig {
     #[serde(default = "default_discord_mode")]
     pub discord_mode: String,
     #[serde(default)]
+    pub discord_user_id: String,
+    #[serde(default)]
     pub notification_sender: String,
     #[serde(default = "discord_app")]
     pub notification_app: String,
@@ -146,12 +148,17 @@ impl AccountConfig {
             resources: vec![],
             allow_ai: false,
             discord_mode: default_discord_mode(),
+            discord_user_id: String::new(),
             notification_sender: String::new(),
             notification_app: discord_app(),
         }
     }
     pub fn credential_ref(&self) -> String {
-        format!("account-{}", self.id)
+        if self.provider == Provider::Discord && self.discord_mode == "personal" {
+            format!("discord-personal-{}", self.id)
+        } else {
+            format!("account-{}", self.id)
+        }
     }
     pub fn auth_description(&self) -> &'static str {
         match self.provider {
@@ -160,7 +167,7 @@ impl AccountConfig {
                 "Official Discord desktop notifications, filtered by sender; no Discord credentials, remote unread or in-app replies"
             }
             Provider::Discord if self.discord_mode == "personal" => {
-                "Full personal Discord client required but unsupported by Discord's official API; QR/password/user-token login unavailable"
+                "Personal Discord QR sign-in · unofficial client · DM sync/replies pending"
             }
             Provider::Discord => {
                 "Discord bot token · authorised bot resources only; does not satisfy personal DM requirements"
@@ -171,7 +178,8 @@ impl AccountConfig {
         }
     }
     pub fn authentication_supported(&self) -> bool {
-        self.provider != Provider::Discord || self.discord_mode == "bot"
+        self.provider != Provider::Discord
+            || ["bot", "personal"].contains(&self.discord_mode.as_str())
     }
 }
 
@@ -227,6 +235,11 @@ pub fn validate(
                 .any(|r| r.is_empty() || r.len() > 256)
         {
             bail!("account configuration exceeds its bounds");
+        }
+        if !account.discord_user_id.is_empty()
+            && !crate::discord_auth::protocol::snowflake(&account.discord_user_id)
+        {
+            bail!("Discord user ID must be a valid snowflake");
         }
         if !["notifications", "personal", "bot"].contains(&account.discord_mode.as_str()) {
             bail!("Discord mode must be notifications, personal or bot");

@@ -320,7 +320,8 @@ fn notification(serial: usize, sender: &str) -> Notification {
 fn discord_personal_requirement_is_not_silently_substituted_and_notifications_are_read_only() {
     let account = AccountConfig::new("discord-home", Provider::Discord);
     assert_eq!(account.discord_mode, "personal");
-    assert!(!account.authentication_supported());
+    assert!(account.authentication_supported());
+    assert!(account.auth_description().contains("QR sign-in"));
     assert!(!discord_notifications::matches(
         &account,
         &notification(1, "Fictional Son")

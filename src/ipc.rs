@@ -142,7 +142,7 @@ pub struct Client {
 impl Client {
     pub fn connect(path: &Path, role: Role) -> Result<Self> {
         let metadata = fs::symlink_metadata(path)
-            .context("service socket unavailable; start d-hub daemon --demo --foreground first")?;
+            .context("service socket unavailable; launch d-hub to start the live service, or start an explicit demo daemon")?;
         if !metadata.file_type().is_socket()
             || metadata.uid() != nix::unistd::geteuid().as_raw()
             || metadata.permissions().mode() & 0o077 != 0
@@ -183,6 +183,7 @@ impl Client {
 }
 fn empty_snapshot() -> Snapshot {
     Snapshot {
+        discord_personal_qr_setup: false,
         live: false,
         provider_status: std::collections::BTreeMap::new(),
         revision: 0,
@@ -612,6 +613,7 @@ impl Link {
                     app.session = snapshot.session;
                     app.settings = snapshot.settings;
                     app.live_service = snapshot.live;
+                    app.service_supports_discord_qr = snapshot.discord_personal_qr_setup;
                     app.provider_status = snapshot.provider_status;
                     app.selected = snapshot.selected;
                     app.focused = snapshot.focused;

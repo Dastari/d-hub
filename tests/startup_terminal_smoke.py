@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Default-launch regression: empty isolated config, no keyring or provider access."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+from terminal_smoke import BINARY, Terminal
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix="d-hub-startup-") as temporary:
+        directory = Path(temporary)
+        runtime = directory / "runtime"
+        runtime.mkdir(mode=0o700)
+        overrides = {
+            "XDG_RUNTIME_DIR": str(runtime),
+            "XDG_STATE_HOME": str(directory / "state"),
+            "XDG_CONFIG_HOME": str(directory / "config"),
+        }
+        previous = {key: os.environ.get(key) for key in overrides}
+        os.environ.update(overrides)
+        terminal = None
+
+        def cli(*arguments, check=True):
+            return subprocess.run(
+                [str(BINARY), *arguments], capture_output=True, text=True, check=check
+            )
+
+        def snapshot():
+            return json.loads(cli("service", "snapshot", "--json").stdout)
+
+        try:
+            terminal = Terminal([])
+            terminal.wait(lambda: b"Set up accounts" in terminal.output, "automatic first-launch setup")
+            first = snapshot()
+            assert first["live"] is True and first["session"]["messages"] == []
+            socket = runtime / "d-hub/service-live.sock"
+            inode = socket.stat().st_ino
+            database = directory / "state/d-hub/live/service.sqlite3"
+            assert database.exists()
+            assert socket.stat().st_mode & 0o077 == 0
+            assert database.stat().st_mode & 0o077 == 0
+
+            # Create account metadata through the first-launch TUI, without authentication.
+            terminal.send(":account add discord personal\r")
+            terminal.wait(lambda: any(a["id"] == "personal" for a in snapshot()["settings"]["accounts"]), "account setup metadata")
+            assert snapshot()["settings"]["accounts"][0]["enabled"] is False
+            terminal.close()
+            terminal = None
+            assert snapshot()["session"]["messages"] == []  # service survives the drawer
+            terminal = Terminal([])
+            terminal.wait(lambda: b"LIVE" in terminal.output, "reopen existing live service")
+            assert socket.stat().st_ino == inode  # reuse, no second service
+            terminal.close()
+            terminal = None
+            cli("service", "stop")
+
+            # A stale socket does not require a foreground daemon command from the user.
+            terminal = Terminal(["drawer"])
+            terminal.wait(lambda: b"LIVE" in terminal.output, "automatic restart")
+            terminal.close()
+            terminal = None
+            cli("service", "stop")
+
+            # Connect-only behavior and noninteractive calls cannot create a hidden service.
+            terminal = Terminal(["drawer", "--no-start-service"])
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                terminal.pump()
+            assert b"service socket unavailable" in terminal.output
+            terminal.abort()
+            terminal = None
+            assert not socket.exists()
+            result = cli(check=False)
+            assert result.returncode != 0 and "interactive terminal" in result.stderr
+            assert not socket.exists()
+        finally:
+            if terminal is not None:
+                terminal.abort()
+            cli("service", "stop", check=False)
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    print("Startup PTY smoke passed: automatic live owner, first account setup, reuse, restart, private state and connect-only/noninteractive guards.")
+
+
+if __name__ == "__main__":
+    main()

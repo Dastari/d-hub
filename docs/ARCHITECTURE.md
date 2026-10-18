@@ -82,3 +82,9 @@ The companion plugin controls the existing Ghostty TUI rather than rendering the
 ## Verification strategy
 
 Unit-test the pure composer reducer and focus predicate. Integration-test database migrations, outbox recovery, draft leases, event replay, clipboard fixtures and provider translation contracts. Use fake services for failures and pagination. Smoke-test actual Ghostty rendering, focus, keyboard sequences, Wayland clipboard, reader spawning and Omarchy alerts on the owner desktop. A remote headless development box cannot establish those desktop behaviours by itself.
+
+## On-demand startup and explicit personal QR setup
+
+Default interactive launch starts/reuses the per-user live owner through a typed subprocess argument list, startup ownership lock, private bounded startup diagnostics and readiness check. The child has a separate process group and detached standard streams; closing the drawer does not stop it. Explicit sockets and --no-start-service are connect-only. Noninteractive callers do not create a hidden daemon. This is process startup, not systemd/desktop installation.
+
+QR authentication is a separate explicit setup job with one per-account runtime lock, ephemeral private key, bounded event channel, mobile approval, verified identity and a local commit step. Secrets never pass through IPC or persistent domain snapshots. The UI/CLI persists the verified user ID through the existing settings contract after successful keyring storage; its personal credential namespace is separate from bot/mail references. An additive snapshot capability prevents storing new identity metadata through older daemons. QR setup does not add a second message/sync/send owner or claim a DM transport exists.

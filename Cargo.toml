@@ -35,6 +35,14 @@ mailparse = "0.18.0"
 html2text = "0.17.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+tungstenite = { version = "0.30.0", features = ["native-tls"] }
+openssl = "0.10.81"
+qrcode = { version = "0.14.1", default-features = false }
+base64 = "0.22"
+
+[dev-dependencies]
+quircs = "0.10.3"
+
 [profile.release]
 lto = "thin"
 strip = true

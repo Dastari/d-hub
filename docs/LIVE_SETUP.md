@@ -59,7 +59,7 @@ Teams uses delegated User.Read, Chat.ReadWrite and offline_access. This slice su
 
 ## Start the service and drawer
 
-On your desktop, XDG_RUNTIME_DIR must be set and private. No service is enabled automatically:
+On your desktop, XDG_RUNTIME_DIR must be set and private. `d-hub` now starts its missing default live service automatically; it does not install a systemd unit. For explicit foreground operation:
 
 ```sh
 d-hub --config "$HOME/.config/d-hub/config.toml" daemon --live --foreground --data-dir "$HOME/.local/state/d-hub/live"
@@ -72,7 +72,7 @@ d-hub drawer
 d-hub service status --json
 ```
 
-Running `d-hub` without a subcommand opens the live drawer. The default live socket is `$XDG_RUNTIME_DIR/d-hub/service-live.sock`; pass `--socket PATH` to drawer/service/config/account/profile/ai-auth for another private socket. `daemon --demo` defaults to service-demo.sock; existing examples with explicit demo sockets still work.
+Running `d-hub` without a subcommand starts/reuses the live service and opens the drawer. An empty profile opens account setup. The default live socket is `$XDG_RUNTIME_DIR/d-hub/service-live.sock`; pass `--socket PATH` to drawer/service/config/account/profile/ai-auth for another private socket. `daemon --demo` defaults to service-demo.sock; existing examples with explicit demo sockets still work.
 
 Use a fresh live directory. Live mode refuses demo databases and legacy fixture JSON. A per-user ownership lock prevents two live profiles from starting provider workers simultaneously. Closing the drawer leaves the foreground daemon running; `service stop` shuts it down. A restart preserves drafts, local dismissals, sync checkpoints and outbox operations.
 
@@ -118,4 +118,4 @@ Jev/OpenAI decision filtering runs once in the daemon. Store the key through `ai
 
 The active feed is a recent 200-item window. Pinned targets, selected items, saved drafts and pending read updates are protected from eviction. Normalized remote records and local dismissal state remain in the private database; a full archive browser/retention UI is pending. Cached body previews are limited to 16,000 bytes; oversized IMAP messages fetch headers only beyond one MiB. The original client is needed for complete oversized content and files.
 
-Attachment names/availability are shown, but download, upload, clipboard images, reply-all, richer conversation history, notifications/sounds with Omarchy DND, automatic reconnect, systemd packaging and the Omarchy companion remain unfinished. Personal Discord DMs/replies remain an unresolved integration requirement; notification previews and bot channels do not satisfy it. The optional standalone notification bridge remains separate and read-only. No alerts or sounds are emitted by the new live adapters.
+Attachment names/availability are shown, but download, upload, clipboard images, reply-all, richer conversation history, notifications/sounds with Omarchy DND, automatic reconnect, systemd packaging and the Omarchy companion remain unfinished. [Personal Discord QR sign-in](DISCORD_SETUP.md) is implemented; DM sync/replies remain unfinished; notification previews and bot channels do not satisfy it. The optional standalone notification bridge remains separate and read-only. No alerts or sounds are emitted by the new live adapters.

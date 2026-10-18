@@ -127,6 +127,11 @@ enum Command {
         socket: Option<PathBuf>,
         #[arg(
             long,
+            help = "Connect only; do not launch a missing default live service"
+        )]
+        no_start_service: bool,
+        #[arg(
+            long,
             value_name = "PATH",
             help = "Restore unsent drafts from a disconnected drawer; never replay sends"
         )]
@@ -258,6 +263,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let command = cli.command.unwrap_or(Command::Drawer {
         socket: None,
+        no_start_service: false,
         recover: None,
     });
     match command {
@@ -323,6 +329,7 @@ fn run(cli: Cli) -> Result<()> {
                     app.reader = Some(message);
                     app.mode = d_hub::app::Mode::Reader;
                     app.live_service = snapshot.live;
+                    app.service_supports_discord_qr = snapshot.discord_personal_qr_setup;
                     app.provider_status = snapshot.provider_status;
                     app.service_socket = Some(socket.clone());
                     let link = d_hub::ipc::Link::new(client, socket, Some(MessageId(message_id)));
@@ -533,6 +540,39 @@ fn run(cli: Cli) -> Result<()> {
                         .iter()
                         .find(|a| a.id == id)
                         .context("unknown account")?;
+                    if account.provider == d_hub::domain::Provider::Discord
+                        && account.discord_mode == "personal"
+                    {
+                        if secret_stdin || cli.json {
+                            bail!(
+                                "Personal Discord uses an interactive QR screen; password/stdin/JSON login is unavailable"
+                            );
+                        }
+                        if service
+                            .as_ref()
+                            .is_some_and(|c| !c.snapshot.discord_personal_qr_setup)
+                        {
+                            bail!(
+                                "Restart the older daemon with d-hub service stop, then relaunch d-hub before QR setup"
+                            );
+                        }
+                        let original = account.clone();
+                        if let Some(user) = tui::discord_setup(original.clone())? {
+                            if let Some(client) = &mut service {
+                                settings = client
+                                    .request_snapshot(d_hub::ipc::Command::Poll { after: 0 })?
+                                    .settings;
+                            }
+                            let account=settings.accounts.iter_mut().find(|a|a.id==original.id&&a.provider==original.provider&&a.discord_mode=="personal"&&a.discord_user_id==original.discord_user_id).context("Account changed during sign-in; session saved separately in keyring, metadata not replaced")?;
+                            account.discord_user_id = user.id;
+                            account.username = user.username;
+                            persist_settings(&settings, &path, &mut service)?;
+                            eprintln!(
+                                "Discord session stored in keyring. Personal DM sync/replies are not connected yet."
+                            );
+                        }
+                        return Ok(());
+                    }
                     if !account.authentication_supported() {
                         bail!("{}", account.auth_description());
                     }
@@ -564,11 +604,27 @@ fn run(cli: Cli) -> Result<()> {
                     if !d_hub::policy::identifier(&id) {
                         bail!("invalid account ID");
                     }
+                    let reference = settings
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == id)
+                        .map(|a| a.credential_ref());
                     if let Some(account) = settings.accounts.iter_mut().find(|a| a.id == id) {
                         account.enabled = false;
                         persist_settings(&settings, &path, &mut service)?;
                     }
-                    d_hub::auth::SecretService.remove(&format!("account-{id}"))?;
+                    if let Some(reference) = reference {
+                        d_hub::auth::SecretService.remove(&reference)?;
+                    } else {
+                        let base = d_hub::auth::SecretService.remove(&format!("account-{id}"));
+                        let personal =
+                            d_hub::auth::SecretService.remove(&format!("discord-personal-{id}"));
+                        if base.is_err() && personal.is_err() {
+                            bail!(
+                                "Could not remove account credentials; unlock the keyring and check the account ID"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -633,14 +689,38 @@ fn run(cli: Cli) -> Result<()> {
                 })?,
             )?;
         }
-        Command::Drawer { socket, recover } => {
+        Command::Drawer {
+            socket,
+            recover,
+            no_start_service,
+        } => {
             if cli.json {
                 bail!("drawer is interactive; use service snapshot --json");
             }
+            use std::io::IsTerminal;
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                bail!(
+                    "drawer requires an interactive terminal; use service status --json for diagnostics"
+                );
+            }
+            let auto_start = socket.is_none() && !no_start_service;
             let socket = socket
                 .map(Ok)
                 .unwrap_or_else(d_hub::ipc::default_live_socket)?;
-            let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Drawer)?;
+            let mut client = if auto_start {
+                let config = cli
+                    .config
+                    .clone()
+                    .map(Ok)
+                    .unwrap_or_else(config::default_path)?;
+                d_hub::startup::connect_or_start(
+                    &socket,
+                    &d_hub::startup::data_directory()?,
+                    &config,
+                )?
+            } else {
+                d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Drawer)?
+            };
             if let Some(path) = recover {
                 d_hub::ipc::restore(&mut client, &path)?;
             }
@@ -651,6 +731,7 @@ fn run(cli: Cli) -> Result<()> {
             app.shared = true;
             app.service_socket = Some(socket.clone());
             app.live_service = snapshot.live;
+            app.service_supports_discord_qr = snapshot.discord_personal_qr_setup;
             app.provider_status = snapshot.provider_status;
             app.notice = if app.live_service {
                 "LIVE · replies go to the displayed recipient when account allow_send is enabled."
@@ -658,6 +739,10 @@ fn run(cli: Cli) -> Result<()> {
                 "Connected to offline service · simulated sends."
             }
             .into();
+            if app.live_service && app.settings.accounts.is_empty() {
+                app.mode = d_hub::app::Mode::Settings;
+                app.notice="Welcome to d-hub · :account add discord personal, then :auth personal for QR sign-in. iCloud/Office365/Teams setup is also available.".into();
+            }
             let link = d_hub::ipc::Link::new(client, socket, None);
             app.service_socket = Some(link.socket.clone());
             tui::run_connected(app, link, false)?;
@@ -700,7 +785,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Doctor => {
             let value = serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"), "mode": "live-preview", "live_providers": true,
-                "discord_personal_history": false, "discord_personal_replies": false,
+                "discord_personal_history": false, "discord_personal_replies": false, "discord_personal_qr_setup":true,
                 "discord_notification_capture": "opt-in, desktop unverified",
                 "account_setup": true, "secret_service_helper_available":d_hub::auth::SecretService::available(), "typed_decision_adapters": true, "remote_read_sync": ["icloud","office365"],
                 "network_access": true, "demo_network_access": false, "daemon_ipc": true, "daemon_mode": ["live","offline-demo"], "sqlite_storage": true, "shared_reader": true, "omarchy_plugin": false,

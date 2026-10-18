@@ -194,7 +194,7 @@ fn profile_account_and_prompt_file_commands_use_the_shared_schema() {
     assert_eq!(settings.accounts[0].discord_mode, "personal");
     let output = run(&path, &["account", "auth", "home-discord"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
     let bytes = std::fs::read(&path).unwrap();
     assert!(
         !run(

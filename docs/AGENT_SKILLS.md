@@ -7,7 +7,7 @@ Skills are stored in `.agents/skills` so they travel with this project and can b
 | d-hub-rust-tui | Ratatui/Crossterm UI, composer reducer, input modes and reader windows |
 | d-hub-icloud-mail | iCloud IMAP/SMTP, MIME, unread sync and replies |
 | d-hub-microsoft-graph | Office 365 and Teams OAuth, Graph sync, permissions and files |
-| d-hub-discord | Feasible bot access, message events, identity and unsupported personal DMs |
+| d-hub-discord | Owner-selected personal QR setup, private identity/session storage, DM phases and separate bot capabilities |
 | d-hub-omarchy-ghostty | Window launch, clipboard, themes, notifications, DND and sounds |
 | d-hub-ai-decisions | Jev/OpenAI adapters, focus questions, failure handling and summaries |
 | cli-creator | Composable CLI contracts, diagnostics, structured output and packaging |

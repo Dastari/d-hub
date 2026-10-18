@@ -17,3 +17,7 @@ pub mod ipc;
 pub mod service;
 
 pub mod providers;
+
+pub mod discord_auth;
+
+pub mod startup;

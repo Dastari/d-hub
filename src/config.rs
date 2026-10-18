@@ -381,8 +381,13 @@ impl Settings {
                 rows.push(SettingRow::choice(
                     format!("accounts.{}.discord_mode", a.id),
                     &a.discord_mode,
-                    "Notification-only personal DM bridge; full personal client unsupported",
+                    "Personal QR sign-in, optional notification bridge, or bot; DM transport pending",
                     &["notifications", "personal", "bot"],
+                ));
+                rows.push(SettingRow::text(
+                    format!("accounts.{}.discord_user_id", a.id),
+                    &a.discord_user_id,
+                    "Pinned Discord identity from QR setup; use a new account ID to change users",
                 ));
                 rows.push(SettingRow::text(format!("accounts.{}.notification_sender", a.id), &a.notification_sender, "Exact notification title/name to include (e.g. your son's Discord display name)"));
                 rows.push(SettingRow::text(
@@ -547,6 +552,7 @@ impl Settings {
                             "resources" => a.resources = terms(),
                             "allow_ai" => a.allow_ai = value.parse()?,
                             "discord_mode" => a.discord_mode = value.into(),
+                            "discord_user_id" => a.discord_user_id = value.into(),
                             "notification_sender" => a.notification_sender = value.into(),
                             "notification_app" => a.notification_app = value.into(),
                             _ => bail!(

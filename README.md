@@ -1,6 +1,8 @@
 # d-hub
 
-d-hub is a keyboard-first communications drawer for dastari, built for Arch Linux, Omarchy and Ghostty. It is designed to bring unread iCloud mail, Office 365 mail, Teams and personal Discord DMs into one chronological feed with a persistent, context-aware reply composer. Personal Discord history and replies remain an unresolved integration requirement; bot channels do not meet the owner’s needs.
+d-hub is a keyboard-first communications drawer for dastari, built for Arch Linux, Omarchy and Ghostty. It is designed to bring unread iCloud mail, Office 365 mail, Teams and personal Discord DMs into one chronological feed with a persistent, context-aware reply composer. Personal QR sign-in is implemented; DM synchronization, replies and history remain unfinished. Bot channels do not meet the owner’s needs.
+
+Personal Discord [QR sign-in setup](docs/DISCORD_SETUP.md) is available; DM syncing/replies are still the next step.
 
 The interface uses open spacing, minimal borders and a consistent colour language across sources, with a slow accent shift and braille activity indicators. It aims for a modern AI-harness feel: Unicode, RGB themes, image previews, attachment chips, a command palette, discoverable shortcuts and a multiline input. Focus profiles filter the shared feed without source tabs. Reduced motion is available.
 
@@ -10,7 +12,7 @@ Deliver d-hub as a standalone Rust application with an optional Omarchy companio
 
 The shared SQLite service now supports opt-in **real iCloud mail, Microsoft mail and selected Teams chats**, with persistent drafts, background sync/replies, remote mail read updates and optional daemon-owned Jev/OpenAI filtering. Live profiles start empty; demo data stays isolated. Sending and account connections default off. Provider tests use local fake servers; owner account and actual desktop acceptance remain pending. Personal Discord replies, attachments and the Omarchy companion are unfinished.
 
-Start with the [real-account setup guide](docs/LIVE_SETUP.md). It covers authentication, a separate live profile, read sync, safe first replies, send recovery and current limits. Running `d-hub` now opens the live drawer; `d-hub demo` remains explicitly offline.
+Start with the [real-account setup guide](docs/LIVE_SETUP.md). It covers authentication, a separate live profile, read sync, safe first replies, send recovery and current limits. Running `d-hub` starts the live service if missing and opens the drawer; empty profiles open account setup. `d-hub demo` remains explicitly offline. [Personal Discord QR setup](docs/DISCORD_SETUP.md) is now implemented; personal DM sync/replies remain pending.
 
 The first Discord delivery needs new personal DMs in the shared arrival-ordered feed and quick replies. Historical context is deferred to phase 2: opening a chat loads recent context, with older pages fetched on demand. A broader client follows in phase 3. History is not an initial-release gate. Discord’s supported bot API cannot supply this personal inbox. The optional notification bridge does **not** satisfy that requirement: it has no history, replies, remote read state or reliable conversation deep link. It remains disabled unless explicitly configured. See [integration limits](docs/INTEGRATIONS.md#discord).
 
@@ -32,7 +34,7 @@ Every message is fictional and every send is a local simulation. Demo mode never
 
 In navigation mode, Left/Right cycles the source filter in either direction: All, iCloud, Discord, Teams, Email and Office 365. Email combines both mail providers. The header shows the active source; source, Work/Home focus and search filter the same chronological feed. Locked drafts keep their original recipient and attachments. With the default `reply_first = true`, Up/Down saves the current message’s reply and restores the next one while staying ready to type; Left/Right cycles sources and prepares a visible reply. Alt+arrows moves the text cursor, including multiline movement. Each incoming message has its own draft, even within the same conversation. Source combinations with no messages park the draft and clear the recipient. Pending/uncertain sends block reply switching. Escape still provides explicit browsing/command mode. Set `reply_first false` for the original insert-mode cursor arrows and explicit `s` save-and-switch workflow. The source setting is also available through `config set source all|discord|teams|email|icloud|office365` or the settings TUI.
 
-Each source has a distinct colour (Discord uses blurple). A solid `●` means unread and a hollow `○` means read. Explicit selection marks seen by default. `u` toggles unread, `e` dismisses/restores an item, `D` includes dismissed items, and `S` includes spam matches. Accepted mock replies dismiss their original incoming message; failures and uncertain sends retain it. These states survive reopening a persistent profile. Provider read syncing is queued by revision but has no connected transport yet.
+Each source has a distinct colour (Discord uses blurple). A solid `●` means unread and a hollow `○` means read. Explicit selection marks seen by default. `u` toggles unread, `e` dismisses/restores an item, `D` includes dismissed items, and `S` includes spam matches. Accepted mock replies dismiss their original incoming message; failures and uncertain sends retain it. These states survive reopening a persistent profile. The offline demo queues fictional read intent; live iCloud/Microsoft mail use real revision-checked transports.
 
 `o` opens the selected message in the in-process reader; Ctrl+o requests a separate Ghostty fixture reader and falls back when Ghostty cannot be launched. The standalone reader can also run in another terminal:
 
@@ -104,7 +106,7 @@ cargo run --locked -- config set ai.provider jev
 cargo run --locked -- ai-auth
 ```
 
-Credentials use the desktop Secret Service through `secret-tool` (Arch package `libsecret`); unlock your keyring first. No secret arguments or credentials in TOML. Microsoft requires a registered public-client app and tenant consent. Setup stores credentials; mail/Teams fetching and sending are not connected yet. AI is off globally and per account by default. To opt in, set `ai.enabled true` and `accounts.ACCOUNT.allow_ai true`; only the explicitly launched notification feed schedules real decisions. Demo remains offline regardless of these settings. Attachment bytes are never sent for classification.
+Credentials use the desktop Secret Service through `secret-tool` (Arch package `libsecret`); unlock your keyring first. No secret arguments or credentials in TOML. Microsoft requires a registered public-client app and tenant consent. The live service connects explicitly enabled mail/Teams accounts. Personal Discord setup uses a QR screen and keyring storage; DM transport remains pending. AI is off globally and per account by default. To opt in, set `ai.enabled true` and `accounts.ACCOUNT.allow_ai true`; the live daemon and explicitly launched notification feed schedule real decisions. Demo remains offline regardless of these settings. Attachment bytes are never sent for classification.
 
 For the **optional interim** Discord bridge, keep the official desktop client running with message previews and desktop notifications enabled:
 
@@ -125,6 +127,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 tests/terminal_smoke.py
 python3 tests/service_terminal_smoke.py
+python3 tests/startup_terminal_smoke.py
 ```
 
 The PTY smoke test uses the debug executable built by `cargo test` (or `cargo build`). It exercises the real event loop with fake data; it does not validate an actual Omarchy desktop.

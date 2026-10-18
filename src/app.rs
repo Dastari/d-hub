@@ -55,6 +55,7 @@ pub enum Mode {
     Reader,
     EditSetting,
     Secret,
+    DiscordQr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +74,7 @@ pub type PendingDecision = (
 pub struct App {
     pub shared: bool,
     pub live_service: bool,
+    pub service_supports_discord_qr: bool,
     pub provider_status: BTreeMap<String, String>,
     pub service_socket: Option<std::path::PathBuf>,
     pub actions: Vec<crate::service::Action>,
@@ -94,6 +96,7 @@ pub struct App {
     pub reader_query: String,
     pub edit_key: Option<String>,
     pub secret_ref: Option<String>,
+    pub discord_setup: Option<crate::discord_auth::Setup>,
     pub auth_job: Option<std::sync::mpsc::Receiver<String>>,
     pub live_setup: bool,
     pub live_feed: bool,
@@ -141,6 +144,7 @@ impl App {
         let mut app = Self {
             shared: false,
             live_service: false,
+            service_supports_discord_qr: false,
             provider_status: BTreeMap::new(),
             service_socket: None,
             actions: vec![],
@@ -162,6 +166,7 @@ impl App {
             reader_query: String::new(),
             edit_key: None,
             secret_ref: None,
+            discord_setup: None,
             auth_job: None,
             live_setup: false,
             live_feed: false,
