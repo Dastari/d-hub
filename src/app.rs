@@ -73,6 +73,8 @@ pub type PendingDecision = (
 
 pub struct App {
     pub shared: bool,
+    pub update_requested: bool,
+    pub update_status: Option<crate::update::Status>,
     pub live_service: bool,
     pub service_supports_discord_qr: bool,
     pub provider_status: BTreeMap<String, String>,
@@ -143,6 +145,8 @@ impl App {
         let editor = Editor::new(session.composer.body());
         let mut app = Self {
             shared: false,
+            update_requested: false,
+            update_status: None,
             live_service: false,
             service_supports_discord_qr: false,
             provider_status: BTreeMap::new(),

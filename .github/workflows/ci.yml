@@ -17,4 +17,6 @@ jobs:
       - run: python3 tests/terminal_smoke.py
       - run: python3 tests/service_terminal_smoke.py
       - run: python3 tests/startup_terminal_smoke.py
+      - run: python3 tests/update_terminal_smoke.py
+      - run: python3 tests/install_smoke.py
       - run: cargo +stable run --locked -- demo --snapshot

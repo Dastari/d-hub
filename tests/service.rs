@@ -419,6 +419,27 @@ fn version_and_frame_limits_fail_without_stopping_other_clients() {
     assert!(
         matches!(serde_json::from_slice::<Reply>(&reply).unwrap(),Reply::Error { code,.. } if code == "version")
     );
+    // Upgrade discovery stays available even across protocol/snapshot schema changes.
+    let bytes = serde_json::to_vec(&ipc::Request {
+        version: 999,
+        command: Command::BuildInfo,
+    })
+    .unwrap();
+    stream
+        .write_all(&(bytes.len() as u32).to_be_bytes())
+        .unwrap();
+    stream.write_all(&bytes).unwrap();
+    stream.read_exact(&mut length).unwrap();
+    let mut reply = vec![0; u32::from_be_bytes(length) as usize];
+    stream.read_exact(&mut reply).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<Reply>(&reply).unwrap(),
+        Reply::BuildInfo {
+            protocol: ipc::VERSION,
+            editor_connected: false,
+            ..
+        }
+    ));
     drop(stream);
     let mut oversized = UnixStream::connect(&service.socket).unwrap();
     oversized
@@ -686,4 +707,56 @@ fn recovery_write_failure_keeps_the_unsaved_draft_in_the_window() {
         app.session.composer.body(),
         "Keep this unsaved reply visible"
     );
+}
+
+#[test]
+fn update_waits_for_an_active_send_without_retrying_or_releasing_its_target() {
+    let root = private_dir();
+    let database = Database::open(root.path(), &Settings::default()).unwrap();
+    let mut owner = Owner::open(database).unwrap();
+    assert!(owner.update_safe());
+    let expected = owner.app.session.composer.clone();
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Compose {
+                expected,
+                event: Event::Body("A fictional send must finish before update".into()),
+                outcome: d_hub::app::MockOutcome::Failure,
+            }],
+        )
+        .unwrap();
+    let target = owner
+        .app
+        .session
+        .composer
+        .draft
+        .as_ref()
+        .unwrap()
+        .target
+        .clone();
+    let expected = owner.app.session.composer.clone();
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Compose {
+                expected,
+                event: Event::Submit,
+                outcome: d_hub::app::MockOutcome::Failure,
+            }],
+        )
+        .unwrap();
+    assert!(!owner.update_safe());
+    std::thread::sleep(Duration::from_millis(700));
+    owner.tick().unwrap();
+    assert!(owner.update_safe());
+    assert!(matches!(
+        owner.app.session.composer.send,
+        SendState::Failed(_)
+    ));
+    assert_eq!(
+        owner.app.session.composer.draft.as_ref().unwrap().target,
+        target
+    );
+    assert!(owner.app.session.composer.sent.is_empty());
 }

@@ -144,6 +144,11 @@ enum Command {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Check for and install a production update through the running live service
+    Update {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
     /// Report implemented capabilities and remaining desktop checks
     Doctor,
 }
@@ -678,7 +683,7 @@ fn run(cli: Cli) -> Result<()> {
             };
             let database =
                 d_hub::database::Database::open_mode(&data_dir, &Settings::load(&path)?, live)?;
-            d_hub::ipc::serve(
+            let restart = d_hub::ipc::serve(
                 database,
                 &socket.map(Ok).unwrap_or_else(|| {
                     if live {
@@ -688,6 +693,10 @@ fn run(cli: Cli) -> Result<()> {
                     }
                 })?,
             )?;
+            drop(_live_owner);
+            if let Some(binary) = restart {
+                d_hub::update::reexec(&binary)?;
+            }
         }
         Command::Drawer {
             socket,
@@ -747,6 +756,14 @@ fn run(cli: Cli) -> Result<()> {
             app.service_socket = Some(link.socket.clone());
             tui::run_connected(app, link, false)?;
         }
+        Command::Update { socket } => {
+            let socket = socket
+                .map(Ok)
+                .unwrap_or_else(d_hub::ipc::default_live_socket)?;
+            let mut client = d_hub::ipc::Client::connect(&socket, d_hub::ipc::Role::Control)?;
+            let snapshot = client.request_snapshot(d_hub::ipc::Command::CheckUpdate)?;
+            println!("{}", serde_json::to_string_pretty(&snapshot.update)?);
+        }
         Command::Service { socket, action } => {
             let socket = socket
                 .map(Ok)
@@ -773,7 +790,7 @@ fn run(cli: Cli) -> Result<()> {
                 ServiceAction::Status => println!(
                     "{}",
                     serde_json::to_string_pretty(
-                        &serde_json::json!({"protocol":d_hub::ipc::VERSION,"mode":if client.snapshot.live {"live"}else{"offline-demo"},"provider_status":client.snapshot.provider_status,"revision":client.snapshot.revision,"editor_connected":client.snapshot.editor_connected,"messages":client.snapshot.session.messages.len(),"live_providers":client.snapshot.live})
+                        &serde_json::json!({"protocol":d_hub::ipc::VERSION,"mode":if client.snapshot.live {"live"}else{"offline-demo"},"update":client.snapshot.update,"provider_status":client.snapshot.provider_status,"revision":client.snapshot.revision,"editor_connected":client.snapshot.editor_connected,"messages":client.snapshot.session.messages.len(),"live_providers":client.snapshot.live})
                     )?
                 ),
                 ServiceAction::Stop => match client.request(d_hub::ipc::Command::Stop)? {

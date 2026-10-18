@@ -1,0 +1,71 @@
+name: Production release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag, e.g. v0.2.0'
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Verify tag matches binary version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(cargo +stable metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print(json.load(sys.stdin)["packages"][0]["version"])')"
+      - run: cargo +stable fmt --check
+      - run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - run: cargo +stable test --locked
+      - run: python3 tests/terminal_smoke.py && python3 tests/service_terminal_smoke.py && python3 tests/startup_terminal_smoke.py
+      - run: python3 tests/update_terminal_smoke.py && python3 tests/install_smoke.py
+      - run: cargo +stable build --release --locked
+      - run: install -Dm755 target/release/d-hub dist/d-hub-${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: d-hub-${{ matrix.target }}
+          path: dist/d-hub-${{ matrix.target }}
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish complete stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cd dist
+          sha256sum d-hub-* > SHA256SUMS
+          cp ../scripts/install.sh install.sh
+          gh release create "$RELEASE_TAG" d-hub-* SHA256SUMS install.sh --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "d-hub $RELEASE_TAG" --notes-file ../docs/RELEASE_NOTES.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

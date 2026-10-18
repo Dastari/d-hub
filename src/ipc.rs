@@ -37,6 +37,7 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    BuildInfo,
     Hello {
         role: Role,
     },
@@ -60,6 +61,8 @@ pub enum Command {
         accepted: bool,
     },
     Refresh,
+    CheckUpdate,
+    QuiesceUpdate,
     Stop,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,13 +74,21 @@ pub struct Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Reply {
+    BuildInfo {
+        version: String,
+        protocol: u32,
+        editor_connected: bool,
+    },
     Snapshot {
         snapshot: Box<Snapshot>,
     },
     Unchanged {
         revision: u64,
+        #[serde(default)]
+        update: Option<crate::update::Status>,
     },
     Stopped,
+    Quiesced,
     Error {
         code: String,
         message: String,
@@ -160,6 +171,28 @@ impl Client {
         client.snapshot = client.request_snapshot(Command::Hello { role })?;
         Ok(client)
     }
+    /// Stable, schema-independent upgrade probe; does not acquire an editor lease.
+    pub fn build_info(path: &Path) -> Result<Reply> {
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.file_type().is_socket()
+            || metadata.uid() != nix::unistd::geteuid().as_raw()
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            bail!("unsafe service socket");
+        }
+        let mut stream = UnixStream::connect(path)?;
+        peer(&stream)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        frame_write(
+            &mut stream,
+            &Request {
+                version: VERSION,
+                command: Command::BuildInfo,
+            },
+        )?;
+        frame_read(&mut stream)
+    }
     pub fn request(&mut self, command: Command) -> Result<Reply> {
         frame_write(
             &mut self.stream,
@@ -183,6 +216,7 @@ impl Client {
 }
 fn empty_snapshot() -> Snapshot {
     Snapshot {
+        update: None,
         discord_personal_qr_setup: false,
         live: false,
         provider_status: std::collections::BTreeMap::new(),
@@ -216,7 +250,7 @@ impl Drop for SocketGuard {
     }
 }
 
-pub fn serve(database: Database, path: &Path) -> Result<()> {
+pub fn serve(database: Database, path: &Path) -> Result<Option<PathBuf>> {
     let parent = path
         .parent()
         .context("socket needs a private parent directory")?;
@@ -254,17 +288,34 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
     let mut owner = Owner::open(database)?;
+    let live = owner.app.live_service;
+    let mut updates = crate::update::Monitor::new(live)?;
+    let mut quiesced = std::collections::BTreeSet::new();
     let (tx, rx) = mpsc::sync_channel(64);
     let connections = Arc::new(AtomicUsize::new(0));
     let mut next_id = 0_u64;
     let mut roles = BTreeMap::new();
     let mut editor = None;
     eprintln!(
-        "Offline demo service ready: {} · no providers or real sends",
+        "{} service ready: {}",
+        if live { "Live" } else { "Offline demo" },
         path.display()
     );
     loop {
         owner.tick()?;
+        if live {
+            updates.tick(owner.app.settings.auto_update);
+            owner.update = Some(updates.status.clone());
+            let clients_ready = roles
+                .iter()
+                .all(|(id, role)| *role == Role::Control || quiesced.contains(id));
+            if let Some(path) = updates.restart_path()
+                && clients_ready
+                && owner.update_safe()
+            {
+                return Ok(Some(path.to_owned()));
+            }
+        }
         // Bounded accept work leaves time for state commands and mock results.
         for _ in 0..16 {
             match listener.accept() {
@@ -319,6 +370,7 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(Delivery::Disconnect(id)) => {
                 roles.remove(&id);
+                quiesced.remove(&id);
                 if editor == Some(id) {
                     editor = None;
                     owner.actions(owner.revision, &[Action::Focus { focused: false }])?;
@@ -331,6 +383,15 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                 written,
             }) => {
                 let request = *request;
+                // Keep this minimal probe independent of snapshot/protocol migrations.
+                if matches!(request.command, Command::BuildInfo) {
+                    let _ = respond.send(Reply::BuildInfo {
+                        version: crate::update::VERSION.into(),
+                        protocol: VERSION,
+                        editor_connected: editor.is_some(),
+                    });
+                    continue;
+                }
                 if request.version != VERSION {
                     let _ = respond.send(error("version", format!("protocol {VERSION} required")));
                     continue;
@@ -351,6 +412,10 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                         }
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(role);
+                            if live && role != Role::Control {
+                                updates.request(false, owner.app.settings.auto_update);
+                                owner.update = Some(updates.status.clone());
+                            }
                             if role == Role::Drawer {
                                 editor = Some(id);
                                 owner
@@ -365,6 +430,7 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                     match request.command {
                         Command::Poll { after } if after == owner.revision => Reply::Unchanged {
                             revision: owner.revision,
+                            update: owner.update.clone(),
                         },
                         Command::Poll { after } => Reply::Snapshot {
                             snapshot: Box::new(owner.snapshot(after, editor.is_some())?),
@@ -375,6 +441,26 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                             },
                             Err(_) => error("not_found", "unknown message"),
                         },
+                        Command::Actions { .. }
+                        | Command::Configure { .. }
+                        | Command::Resolve { .. }
+                            if quiesced.contains(&id) =>
+                        {
+                            error("updating", "Client has saved and paused for service update")
+                        }
+                        Command::CheckUpdate if live && *role != Role::Reader => {
+                            updates.request(true, owner.app.settings.auto_update);
+                            owner.update = Some(updates.status.clone());
+                            Reply::Snapshot {
+                                snapshot: Box::new(owner.snapshot(0, editor.is_some())?),
+                            }
+                        }
+                        Command::QuiesceUpdate
+                            if updates.status.restart_pending && *role != Role::Control =>
+                        {
+                            quiesced.insert(id);
+                            Reply::Quiesced
+                        }
                         Command::Actions {
                             expected_revision,
                             actions,
@@ -460,14 +546,18 @@ pub fn serve(database: Database, path: &Path) -> Result<()> {
                 } else {
                     error("handshake", "hello must be the first request")
                 };
+                let paused = matches!(reply, Reply::Quiesced);
                 let _ = respond.send(reply);
+                if paused {
+                    let _ = written.recv_timeout(Duration::from_secs(2));
+                }
                 if stop {
                     let _ = written.recv_timeout(Duration::from_secs(2));
-                    return Ok(());
+                    return Ok(None);
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
         }
     }
 }
@@ -477,6 +567,10 @@ pub struct Link {
     pub socket: PathBuf,
     pub revision: u64,
     pub connected: bool,
+    pub frozen: bool,
+    update_pending: bool,
+    quiesced: bool,
+    restart_frontend: bool,
     requests: SyncSender<Command>,
     replies: Receiver<Result<Reply, String>>,
     inflight: Option<Vec<Action>>,
@@ -490,12 +584,56 @@ impl Link {
         let socket = fs::canonicalize(&socket).unwrap_or(socket);
         let revision = client.snapshot.revision;
         let settings = client.snapshot.settings.clone();
-        let (tx, rx) = mpsc::sync_channel(1);
+        let (tx, rx) = mpsc::sync_channel::<Command>(1);
         let (results, replies) = mpsc::sync_channel(1);
+        let reconnect_socket = socket.clone();
         std::thread::spawn(move || {
             let mut client = client;
+            let mut paused = false;
             while let Ok(command) = rx.recv() {
-                let result = client.request(command).map_err(|e| format!("{e:#}"));
+                let mut result = client
+                    .request(command.clone())
+                    .map_err(|e| format!("{e:#}"));
+                if matches!(result, Ok(Reply::Quiesced)) {
+                    paused = true;
+                }
+                if result.is_err() && paused && matches!(command, Command::Poll { .. }) {
+                    let until = Instant::now() + Duration::from_secs(30);
+                    while Instant::now() < until {
+                        if let Ok(info) = Client::build_info(&reconnect_socket)
+                            && matches!(&info, Reply::BuildInfo { version, .. } if version != crate::update::VERSION)
+                            && crate::update::executable().is_ok_and(|p| crate::update::managed(&p))
+                        {
+                            result = Ok(info);
+                            paused = false;
+                            break;
+                        }
+                        match Client::connect(
+                            &reconnect_socket,
+                            if reader.is_some() {
+                                Role::Reader
+                            } else {
+                                Role::Drawer
+                            },
+                        ) {
+                            Ok(reconnected)
+                                if !reconnected
+                                    .snapshot
+                                    .update
+                                    .as_ref()
+                                    .is_some_and(|u| u.restart_pending) =>
+                            {
+                                client = reconnected;
+                                result = Ok(Reply::Snapshot {
+                                    snapshot: Box::new(client.snapshot.clone()),
+                                });
+                                paused = false;
+                                break;
+                            }
+                            _ => std::thread::sleep(Duration::from_millis(80)),
+                        }
+                    }
+                }
                 let failed = result.is_err();
                 if results.send(result).is_err() || failed {
                     break;
@@ -514,6 +652,10 @@ impl Link {
             socket,
             revision,
             connected: true,
+            frozen: false,
+            update_pending: false,
+            quiesced: false,
+            restart_frontend: false,
             requests: tx,
             replies,
             inflight: None,
@@ -558,6 +700,9 @@ impl Link {
         };
         Ok(())
     }
+    pub fn restart_frontend(&self) -> bool {
+        self.restart_frontend
+    }
     pub fn pending(&self) -> bool {
         !self.queued.is_empty() || self.inflight.as_ref().is_some_and(|v| !v.is_empty())
     }
@@ -584,6 +729,25 @@ impl Link {
                 let sent = self.inflight.take().unwrap_or_default();
                 let snapshot = match reply {
                     Reply::Snapshot { snapshot } => Some(*snapshot),
+                    Reply::Unchanged { update, .. } => {
+                        self.update_pending = update.as_ref().is_some_and(|u| u.restart_pending);
+                        if app.update_status != update {
+                            if let Some(update) = &update {
+                                app.notice = update.message.clone();
+                            }
+                            app.update_status = update;
+                            dirty = true;
+                        }
+                        None
+                    }
+                    Reply::BuildInfo { version, .. } => {
+                        self.restart_frontend = version != crate::update::VERSION;
+                        None
+                    }
+                    Reply::Quiesced => {
+                        self.quiesced = true;
+                        None
+                    }
                     Reply::Error {
                         code,
                         snapshot: Some(snapshot),
@@ -609,6 +773,20 @@ impl Link {
                     let editor = app.editor.clone();
                     let mode = app.mode;
                     let previous_reader = app.reader.as_ref().map(|m| m.id);
+                    self.update_pending =
+                        snapshot.update.as_ref().is_some_and(|u| u.restart_pending);
+                    if self.quiesced && !self.update_pending {
+                        self.quiesced = false;
+                        self.frozen = false;
+                        self.restart_frontend = snapshot
+                            .update
+                            .as_ref()
+                            .is_some_and(|u| u.running_version != crate::update::VERSION)
+                            && crate::update::executable()
+                                .is_ok_and(|p| crate::update::managed(&p));
+                    }
+                    let update_changed = app.update_status != snapshot.update;
+                    app.update_status = snapshot.update.clone();
                     self.revision = snapshot.revision;
                     app.session = snapshot.session;
                     app.settings = snapshot.settings;
@@ -643,7 +821,13 @@ impl Link {
                         app.editor = editor;
                     }
                     self.last_settings = app.settings.clone();
-                    app.notice = "Connected to offline demo service · sends are simulated and completed by the service.".into();
+                    if let Some(update) = &app.update_status {
+                        if update_changed {
+                            app.notice = update.message.clone();
+                        }
+                    } else {
+                        app.notice = "Connected to offline demo service · sends are simulated and completed by the service.".into();
+                    }
                     dirty = true;
                 }
             }
@@ -659,7 +843,17 @@ impl Link {
         }
         if self.inflight.is_none() {
             let actions = std::mem::take(&mut self.queued);
-            let command = if actions.is_empty() {
+            let command = if actions.is_empty()
+                && self.update_pending
+                && !self.quiesced
+                && app.discord_setup.is_none()
+                && app.auth_job.is_none()
+            {
+                self.frozen = true;
+                Command::QuiesceUpdate
+            } else if actions.is_empty() && std::mem::take(&mut app.update_requested) {
+                Command::CheckUpdate
+            } else if actions.is_empty() {
                 Command::Poll {
                     after: self.revision,
                 }

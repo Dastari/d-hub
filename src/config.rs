@@ -40,6 +40,7 @@ pub struct Settings {
     pub source: SourceFilter,
     pub theme: Theme,
     pub reduced_motion: bool,
+    pub auto_update: bool,
     pub insert_on_focus: bool,
     pub reply_first: bool,
     pub padding_horizontal: u16,
@@ -61,6 +62,7 @@ impl Default for Settings {
             source: SourceFilter::All,
             theme: Theme::Midnight,
             reduced_motion: false,
+            auto_update: true,
             insert_on_focus: true,
             reply_first: true,
             padding_horizontal: 0,
@@ -82,6 +84,7 @@ pub enum Key {
     Focus,
     Theme,
     ReducedMotion,
+    AutoUpdate,
     InsertOnFocus,
     PaddingHorizontal,
     PaddingVertical,
@@ -102,6 +105,12 @@ const PADDING_CHOICES: &[&str] = &[
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
 ];
 pub const REGISTRY: &[Setting] = &[
+    Setting {
+        key: Key::AutoUpdate,
+        name: "auto_update",
+        help: "Install stable production releases automatically (managed installations only); :update always checks",
+        choices: &["true", "false"],
+    },
     Setting {
         key: Key::ReplyFirst,
         name: "reply_first",
@@ -241,6 +250,7 @@ impl Settings {
             Key::Source => self.source.value().into(),
             Key::Theme => self.theme.label().into(),
             Key::ReducedMotion => self.reduced_motion.to_string(),
+            Key::AutoUpdate => self.auto_update.to_string(),
             Key::InsertOnFocus => self.insert_on_focus.to_string(),
             Key::PaddingHorizontal => self.padding_horizontal.to_string(),
             Key::PaddingVertical => self.padding_vertical.to_string(),
@@ -476,6 +486,7 @@ impl Settings {
                         .context("invalid source")?
                 }
                 Key::ReducedMotion => self.reduced_motion = value.parse()?,
+                Key::AutoUpdate => self.auto_update = value.parse()?,
                 Key::InsertOnFocus => self.insert_on_focus = value.parse()?,
                 Key::PaddingHorizontal => self.padding_horizontal = value.parse()?,
                 Key::PaddingVertical => self.padding_vertical = value.parse()?,

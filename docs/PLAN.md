@@ -106,9 +106,12 @@ Exit: user can move from drawer to full workspace and back without losing state 
 
 ## Milestone 11 Packaging and release readiness
 
+Owner-requested production delivery slice: v0.2.0 adds native Linux x86_64/aarch64 release CI, SHA-256 verified user installer, stable auto-update checks (service interval/frontend/manual), atomic replacement and draft/send-safe service/frontend handover. See UPDATES.md. Publishing this early application release is explicitly authorized; provider/desktop acceptance below remains pending, as do plugin packaging and systemd setup.
+
+
 Package the Rust application for Arch and the optional QML companion plugin as separate installable components. Document their version compatibility, missing-backend diagnostics, installation/upgrades, removal and data migration. Verify the installed Omarchy plugin distribution rules; do not assume adding a plugin installs or compiles the Rust application. Measure performance, test terminal resize/Unicode/accessibility and review logs for leaked credentials/content. Choose license/repository publishing with the owner. Include troubleshooting for Ghostty capabilities, plugin/backend reconnect, clipboard, Graph consent, IMAP and DND.
 
-Exit: install/uninstall leaves user data policy explicit, application/plugin upgrades preserve drafts/settings and recorded target-desktop checks pass. Removing or disabling the companion plugin leaves the application and its data usable. Do not claim a released version before account and desktop acceptance checks have been completed.
+Exit: install/uninstall leaves user data policy explicit, application/plugin upgrades preserve drafts/settings and recorded target-desktop checks pass. Removing or disabling the companion plugin leaves the application and its data usable. Clearly distinguish published release artifacts from the still-pending account and desktop acceptance checks.
 
 ## Recommended next agent prompt
 

@@ -8,6 +8,14 @@ The interface uses open spacing, minimal borders and a consistent colour languag
 
 Deliver d-hub as a standalone Rust application with an optional Omarchy companion plugin. The plugin provides an unread/status indicator, drawer activation and quick focus-profile actions; the communications engine and TUI remain in d-hub. The current priority is an owner-tested live mail/Teams feed; the companion remains a separate desktop milestone.
 
+## Install
+
+```sh
+curl -fsSL https://github.com/dastari/d-hub/releases/latest/download/install.sh | sh
+```
+
+Then run `d-hub` in your terminal. Linux x86_64 and aarch64 production builds install under your user account, without sudo or Rust. Managed installations check for updates every six hours and when the frontend opens; use `:update` to check manually. Updates save drafts, finish active sends and restart the background service and managed frontends. Settings include `auto_update` (default true). See [installation and updates](docs/UPDATES.md) for requirements, paths and recovery.
+
 ## Project status
 
 The shared SQLite service now supports opt-in **real iCloud mail, Microsoft mail and selected Teams chats**, with persistent drafts, background sync/replies, remote mail read updates and optional daemon-owned Jev/OpenAI filtering. Live profiles start empty; demo data stays isolated. Sending and account connections default off. Provider tests use local fake servers; owner account and actual desktop acceptance remain pending. Personal Discord replies, attachments and the Omarchy companion are unfinished.
@@ -128,6 +136,8 @@ cargo test --locked
 python3 tests/terminal_smoke.py
 python3 tests/service_terminal_smoke.py
 python3 tests/startup_terminal_smoke.py
+python3 tests/update_terminal_smoke.py
+python3 tests/install_smoke.py
 ```
 
 The PTY smoke test uses the debug executable built by `cargo test` (or `cargo build`). It exercises the real event loop with fake data; it does not validate an actual Omarchy desktop.

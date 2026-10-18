@@ -21,3 +21,5 @@ pub mod providers;
 pub mod discord_auth;
 
 pub mod startup;
+
+pub mod update;

@@ -114,3 +114,7 @@ On disconnect, the attached drawer preserves active/saved drafts and pending int
 ## Live provider settings
 
 See [live setup](LIVE_SETUP.md) for enabled/allow_send defaults, account identity pinning, mailbox/chat resources, initial history bounds, provider capabilities and owner setup steps. Live and demo databases cannot change modes. Standalone TOML seeds new profiles only; edit active service preferences through its TUI or `config --socket`. No-subcommand launch opens the live drawer.
+
+## Production updates
+
+`auto_update` is a boolean, default true, in the shared typed settings registry and TUI. It controls startup, six-hour and frontend-open production checks for managed live installations. `:update` / `d-hub update` explicitly requests a check/install even when automatic checks are disabled. Demo never checks. Non-managed executables are never overwritten. While the owner is running, use `config --socket PATH set auto_update false`; its SQLite settings are authoritative. See [updates](UPDATES.md).

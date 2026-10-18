@@ -32,8 +32,9 @@ use std::{
 };
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nPersonal Discord replies, images and the Omarchy plugin remain pending.";
+const HELP: &str = "COMPOSE · reply-first is on by default\n  Up / Down      save reply and switch messages\n  Left / Right   switch source and restore its reply\n  Alt+arrows     move within reply text\n  i / r          enter insert mode\n  Enter          newline (never sends)\n  Ctrl+Enter     mock send; Alt+Enter / F5 fallback\n  Esc            leave insert mode, keep draft\n  Ctrl+A         attach harmless fixture\n\nBROWSE · navigation mode\n  j / k, arrows  select communication\n  gg / G         first / last message\n  Ctrl+d / u     move down / up a page\n  mouse wheel    scroll without selecting\n  Left / Right   cycle source filter (All, iCloud, Discord, Teams, Email, Office 365)\n  f              cycle focus profile\n  /              search feed\n  a / x          add / remove last fixture attachment\n  s              save draft and switch to selected\n  e / D          dismiss or restore / include dismissed\n  u              toggle unread (local until provider connected)\n  S              include spam matches\n  v              open official Discord app\n  d              discard draft with confirmation\n  o / Ctrl+o     full preview; Ctrl+o tries Ghostty\n  n              simulate an incoming message\n  F6             simulate drawer active / inactive\n  F7             next mock outcome: success / failure / uncertain\n  :              command palette (Tab cycles commands)\n  ,              shared settings\n  t              change palette\n  ?              this help\n  q / Ctrl+q     save and quit\n\nREADER\n  j / k, arrows, PageUp / Down  scroll\n  /                           search; Enter jumps next\n  q / Esc                     close reader only\n\nCOMMANDS\n  attach · remove · incoming · follow · save-switch\n  discard · send · fail · uncertain · reconcile · settings\n  focus all|work|personal · theme midnight|dusk\n  source all|discord|teams|email|icloud|office365\n  profile add|remove ID · profile prompt ID\n  account add icloud|office365|teams|discord ID\n  auth ACCOUNT|ai · spam prompt\n  update · motion · preview · help · quit\n\nLIVE SERVICE\n  F5 / Ctrl+Enter replies through the configured account.\n  accounts.ID.enabled and allow_send must be enabled.\n  :connections shows provider status.\n  Uncertain sends: check the original client, then use\n  :resolve accepted or :resolve not-sent (unlocks retry).\n  Attachments are listed for reference; downloads/uploads pending.\n\nDemo messages and sends are fictional. Notification capture is read-only.\nPersonal Discord replies, images and the Omarchy plugin remain pending.";
 const COMMANDS: &[&str] = &[
+    "update",
     "attach",
     "remove",
     "incoming",
@@ -1275,6 +1276,13 @@ fn run_command(app: &mut App, command: &str) -> bool {
     app.mode = Mode::Navigate;
     let words: Vec<_> = command.split_whitespace().collect();
     match words.as_slice() {
+        ["update"] if app.shared && app.live_service => {
+            app.update_requested = true;
+            app.notice = "Checking production releases…".into();
+        }
+        ["update"] => {
+            app.notice = "Production updates require the live service; demo stays offline.".into()
+        }
         ["attach"] if !app.live_feed && !app.live_setup && !app.live_service => app.attach(),
         ["remove"] => remove_last(app),
         ["incoming"] if !app.live_feed && !app.live_setup && !app.live_service => app.arrive(),
@@ -1792,6 +1800,9 @@ fn run_inner(
     loop {
         if let Some(link) = &mut link {
             dirty |= link.sync(&mut app)?;
+            if link.restart_frontend() {
+                break;
+            }
         }
         dirty |= poll_discord_setup(&mut app);
         if link.is_none() || app.auth_job.is_some() {
@@ -1818,7 +1829,12 @@ fn run_inner(
         let mut quit = false;
         if event::poll(Duration::from_millis(80))? {
             dirty = true;
-            match event::read()? {
+            let input = event::read()?;
+            if link.as_ref().is_some_and(|l| l.frozen) {
+                app.notice = "Updating d-hub · drafts saved · waiting for service handover…".into();
+                continue;
+            }
+            match input {
                 Event::Key(event) => {
                     let mode = app.mode;
                     if link.as_ref().is_some_and(|l| !l.connected) && !reader_only {
@@ -1938,6 +1954,29 @@ fn run_inner(
     if let Some(notice) = exit_notice {
         eprintln!("{notice}");
     }
+    if link.as_ref().is_some_and(|l| l.restart_frontend()) {
+        let socket = link.as_ref().map(|l| l.socket.clone());
+        drop(link);
+        // The server releases the old editor asynchronously after socket close.
+        if !reader_only && let Some(socket) = socket {
+            let until = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < until {
+                if crate::ipc::Client::build_info(&socket).is_ok_and(|reply| {
+                    matches!(
+                        reply,
+                        crate::ipc::Reply::BuildInfo {
+                            editor_connected: false,
+                            ..
+                        }
+                    )
+                }) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        }
+        crate::update::reexec(&crate::update::executable()?)?;
+    }
     Ok(())
 }
 
@@ -1974,6 +2013,26 @@ pub fn reader(id: crate::domain::MessageId, settings: Settings) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{app::Session, domain::SourceFilter};
+
+    #[test]
+    fn production_update_command_is_explicit_and_keeps_demo_offline_and_drafts_locked() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.editor
+            .insert("draft remains locked during update check");
+        app.update_body();
+        let before = app.session.clone();
+        run_command(&mut app, "update");
+        assert!(!app.update_requested);
+        app.shared = true;
+        app.live_service = true;
+        run_command(&mut app, "update");
+        assert!(app.update_requested);
+        assert_eq!(
+            serde_json::to_vec(&before).unwrap(),
+            serde_json::to_vec(&app.session).unwrap()
+        );
+        assert!(app.actions.is_empty());
+    }
 
     #[test]
     fn arrows_cycle_sources_in_navigation_but_move_the_insert_cursor() {

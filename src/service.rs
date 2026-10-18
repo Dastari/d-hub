@@ -62,6 +62,8 @@ pub enum Action {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     #[serde(default)]
+    pub update: Option<crate::update::Status>,
+    #[serde(default)]
     pub discord_personal_qr_setup: bool,
     #[serde(default)]
     pub live: bool,
@@ -229,6 +231,7 @@ pub fn apply(app: &mut App, action: &Action) -> Result<Option<Submission>> {
 }
 
 pub struct Owner {
+    pub update: Option<crate::update::Status>,
     workers: crate::providers::worker::Workers,
     live: bool,
     send_running: Option<u64>,
@@ -260,6 +263,7 @@ impl Owner {
             revision = database.commit(revision, &app.session, &app.settings, "recovered")?;
         }
         Ok(Self {
+            update: None,
             workers: crate::providers::worker::Workers::default(),
             live,
             send_running: None,
@@ -277,6 +281,7 @@ impl Owner {
                     .first()
                     .is_some_and(|c| c.revision > after.saturating_add(1)));
         Ok(Snapshot {
+            update: self.update.clone(),
             discord_personal_qr_setup: true,
             live: self.live,
             provider_status: self.app.provider_status.clone(),
@@ -438,6 +443,11 @@ impl Owner {
             self.app.session = staged.session;
         }
         Ok(())
+    }
+    pub fn update_safe(&self) -> bool {
+        self.send_running.is_none()
+            && self.pending.is_none()
+            && !matches!(self.app.session.composer.send, SendState::Submitting(_))
     }
     pub fn refresh(&mut self) {
         self.workers.refresh();

@@ -2,6 +2,10 @@
 
 The owner wants a TUI communications hub for Omarchy/Ghostty. The public repository is dastari/d-hub. Live iCloud, Microsoft mail and selected Teams chat transports now run in the shared daemon alongside optional AI decisions. The offline demo remains separate. Read [live setup](docs/LIVE_SETUP.md) and [verification](docs/VERIFICATION.md); real account access/sending has not been exercised by development tools. The owner selected unofficial personal QR setup; authentication is now implemented, while DM events/replies remain the next required integration. Default launch now starts/reuses the missing live service.
 
+## Production delivery and updates · 18 October 2026
+
+The owner explicitly requested GitHub production binaries, a one-line curl installer, background/frontend/manual update checks and automatic service upgrades. Version 0.2.0 adds a managed stable channel; see docs/UPDATES.md. Source builds remain untouched, demo stays offline, and auto_update is shared TUI/CLI configuration. The owner/update monitor stages verified releases off-thread; frontends flush and pause, active sends drain, locks close, then service/frontend exec uses the installed path. No automatic failed-migration rollback or restart supervisor. Production release publishing does not imply completion of remaining live account/desktop feature acceptance. The release workflow must pass and publish assets before claiming the installer is available.
+
 ## Development environment
 
 Continue in the owner's existing checkout; do not relocate the project. Rust is installed through rustup under `~/.cargo/bin`; a noninteractive shell may need that directory on PATH. The prototype was verified with `rustc 1.97.1` and `cargo 1.97.1` on 17 October 2026. Dependency versions are locked in Cargo.lock. The manifest declares Rust 1.88 as the minimum; that toolchain has not been independently tested. Development can be headless, so actual Ghostty/Omarchy checks must be recorded separately.
