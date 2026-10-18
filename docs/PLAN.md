@@ -10,13 +10,23 @@ The foundations and first offline TUI slice are implemented with locked dependen
 
 ## Owner requirements and current slice · 17 October 2026
 
-Personal Discord DMs are essential; server channels and bot conversations are secondary. The desired workflow is one arrival-ordered feed across services, opening any new DM into full conversation history and quick reply. A later full Discord client builds on that. Discord’s supported API does not currently supply the required personal-account inbox. Keep this as an unmet integration requirement; neither a bot demo nor notification capture closes it.
+Personal Discord DMs are essential; server channels and bot conversations are secondary. The first Discord delivery needs new personal DMs in the shared arrival-ordered feed and quick replies. Older history is needed only when the owner opens a chat and may ship in phase 2; a broader Discord client follows in phase 3. History is not a prerequisite for the initial feed/reply slice. Discord’s supported API does not currently supply the required personal-account inbox. Keep this as an unmet integration requirement; neither a bot demo nor notification capture closes it.
 
 The feed/settings slice adds source brand colours, filled/hollow unread/read markers, persistent seen/dismissal state, manual dismiss/restore (`e`), include-dismissed (`D`) and accepted-reply dismissal of the immutable original target. Failure/uncertainty never dismisses. Work and Home are editable profiles; arbitrary profiles carry independent decision prompts, with a separate global spam/promotion prompt. All settings share validated CLI/TUI persistence. Durable revision-checked read changes are ready for adapters; real remote sync is still pending.
 
 Account metadata, keyring storage, explicit Microsoft device setup and Jev/OpenAI decision adapters are implemented ahead of their broader milestones. Mail/Teams fetching/sending and owner live tests remain pending. An **optional**, explicitly selected Discord desktop notification bridge captures matching arrivals without credentials. It is read-only, does not recover full history or send replies, and cannot reliably deep-link the matching conversation. It does not satisfy the primary Discord acceptance criteria. Default Discord account mode retains the personal-client requirement.
 
-Keep milestone 2’s single background owner and IPC next; move optional capture into that owner before multiple live windows or alerts. Resolve personal Discord history/reply feasibility before describing Discord integration as complete. Do not downgrade the requirement to channels or notification previews.
+Keep milestone 2’s single background owner and IPC next; move optional capture into that owner before multiple live windows or alerts. Resolve personal message access/reply feasibility for phase 1; track on-demand history separately for phase 2. Do not downgrade the requirement to channels or notification previews.
+
+## Discord delivery phases · owner clarification 18 October 2026
+
+These phases describe Discord scope, independently of the overall milestone numbers below.
+
+1. **New DMs and quick replies:** receive personal messages, especially from the owner’s son, into the shared feed in arrival order. Retain messages received by d-hub for immediate context; do not require historical backfill before showing or replying to a new arrival. Replies use a verified, immutable account/conversation target. The personal message transport remains unresolved; notification previews alone do not complete this phase.
+2. **Chat context on demand:** when the owner explicitly opens a chat, show cached context and fetch a bounded recent page, then older pages on scroll/request. No startup-wide history download. Provide loading, retry and end-of-history states; opening a chat without network access still shows cached content. Reject late results for another conversation, deduplicate overlap and keep the reader position stable. Historical messages stay in the conversation view and never become fresh feed arrivals, alerts or automatic reply targets. History cannot redirect a locked draft. External AI processing of additional history needs its own configured consent/context policy.
+3. **Broader Discord workspace:** add conversation navigation/search and richer personal-client features. Server channels remain lower priority. The owner also accepts moving history to phase 3 if needed; phase 2 is the planned target, not an initial-release gate.
+
+[Concord](https://github.com/chojs23/concord) is an open-source Rust/Ratatui reference. Its history implementation uses bounded requests and cursor-based pagination; see the [source review](INTEGRATIONS.md#concord-reference-review). Its personal-account login is unofficial. Studying it establishes a technical reference, not a supported Discord API or permission to copy code, install/login, extract credentials or enable personal-token automation. Review integration constraints and licensing before implementation/reuse. The owner’s clarification defers history; it does not resolve the separate personal-account access decision or approve an official-app handoff.
 
 ## Milestone 0 Project foundations
 
@@ -82,13 +92,13 @@ Exit: desktop tests prove DND suppresses sounds and popups, one event alerts onc
 
 ## Milestone 9 Teams and feasible Discord support
 
-The owner has resolved Discord scope: personal DMs with full history and quick reply are essential; channels are lower priority. Resolve supported personal access feasibility and the remaining Teams chats/channels scope. Verify Graph permissions, tenant policy and Teams file-upload semantics before implementing the chosen scope. Implement a Discord bot integration only for authorised resources; personal-account automation is excluded. Make unsupported capabilities visible.
+The owner has resolved Discord scope: personal DM arrivals and quick replies come first; older history loads only on chat open in phase 2 (or 3 if needed), and channels are lower priority. Resolve supported personal access feasibility and the remaining Teams chats/channels scope. Verify Graph permissions, tenant policy and Teams file-upload semantics before implementing the chosen scope. Implement a Discord bot integration only for authorised resources; personal-account automation is excluded. Make unsupported capabilities visible.
 
-Exit: supported sources join the same feed and context model with honest capability reporting. Discord acceptance requires personal DM arrivals, full history and quick reply; the optional notification bridge and bot support do not pass this criterion. If supported personal access remains unavailable, record the blocker explicitly and retain the unmet requirement.
+Exit: supported sources join the same feed and context model with honest capability reporting. Initial Discord acceptance requires personal DM arrivals and quick reply; historical backfill is explicitly deferred. The optional read-only notification bridge and bot support do not pass the personal reply criterion. If supported personal access remains unavailable, record the blocker explicitly and retain the unmet requirement.
 
 ## Milestone 10 Complete TUI workspaces
 
-Expand the second-window reader into full mail navigation/composition and supported Teams/Discord history/navigation. Reuse the same service, settings, drafts and attachment paths. Add explicit draft ownership transfer before editing in multiple windows. Define feature scope per client; avoid promising calls, video or parity with official apps by implication.
+Expand the second-window reader into full mail navigation/composition and supported Teams/Discord history/navigation. For Discord phase 2, load conversation context only on explicit chat open and paginate older messages on demand; do not make bulk historical sync an initial feed/reply dependency. Reuse the same service, settings, drafts and attachment paths. Add explicit draft ownership transfer before editing in multiple windows. Define feature scope per client; avoid promising calls, video or parity with official apps by implication.
 
 Exit: user can move from drawer to full workspace and back without losing state or creating duplicate operations.
 

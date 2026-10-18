@@ -5,7 +5,7 @@ description: Design or implement d-hub's supported Discord bot integration, reso
 
 # Discord integration
 
-Read the Discord scope in [integration design](../../../docs/INTEGRATIONS.md). The owner has not resolved whether personal DMs, server channels or both are essential.
+Read the Discord scope in [integration design](../../../docs/INTEGRATIONS.md). The owner requires personal DMs, especially messages from their son; channels are lower priority. Phase 1 is new arrivals in the shared feed plus quick replies. History is deferred to phase 2 (or 3 if needed), fetched on chat open and paginated on demand, with no initial bulk sync. Concord is a researched technical reference; see the integration design for pinned sources and access/licensing constraints. Do not treat historical backfill as an initial feed/reply gate.
 
 Use [Discord developer docs](https://discord.com/developers/docs/intro) and [self-bot policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots). Never implement personal user-token automation or extract a token from the desktop client. A bot cannot mirror arbitrary personal-account DMs.
 

@@ -10,7 +10,7 @@ Deliver d-hub as a standalone Rust application with an optional Omarchy companio
 
 The Rust prototype includes a mixed offline feed, locked drafts, source colours, persistent local read/dismissal state, editable focus profiles, a global spam policy and shared TUI/CLI settings. Explicit keyring setup supports iCloud app passwords, Microsoft device login and Jev/OpenAI keys. Typed decision adapters and optional, read-only Discord desktop notification capture are implemented. Mail/Teams message transports, remote unread sync, daemon IPC and the Omarchy companion are pending.
 
-The required Discord experience is personal DMs: new arrivals join the shared chronological feed; opening one reveals full conversation history and allows a quick reply. A full client is the longer-term goal. Discord’s supported bot API cannot supply this personal inbox. The optional notification bridge does **not** satisfy that requirement: it has no history, replies, remote read state or reliable conversation deep link. It remains disabled unless explicitly configured. See [integration limits](docs/INTEGRATIONS.md#discord).
+The first Discord delivery needs new personal DMs in the shared arrival-ordered feed and quick replies. Historical context is deferred to phase 2: opening a chat loads recent context, with older pages fetched on demand. A broader client follows in phase 3. History is not an initial-release gate. Discord’s supported bot API cannot supply this personal inbox. The optional notification bridge does **not** satisfy that requirement: it has no history, replies, remote read state or reliable conversation deep link. It remains disabled unless explicitly configured. See [integration limits](docs/INTEGRATIONS.md#discord).
 
 ## Run the prototype
 

@@ -21,7 +21,8 @@ d-hub is a personal communications hub for dastari. Its primary surface is a nar
 | THEME-01 | Custom Unicode/RGB themes, editable semantic styles and live preview | Demo onward, expand in first release |
 | ALERT-01 | Sounds, native Omarchy notifications, DND, quiet hours and per-focus alert policy | First usable release |
 | DESKTOP-01 | Optional Omarchy companion plugin for unread/connection status, Ghostty drawer activation and quick focus-profile actions, backed by the single d-hub service | Prototype after persistent service and reader; first usable release |
-| DISCORD-01 | Personal-account DMs are essential: append new arrivals to the shared feed in arrival order, open full DM history and reply quickly; bot channels or notification previews do not satisfy this | Required; supported access unresolved |
+| DISCORD-01 | Personal-account DMs are essential: append new arrivals to the shared feed in arrival order and reply quickly without requiring historical backfill; bot channels or read-only notification previews do not satisfy this | Discord phase 1; access unresolved |
+| DISCORD-02 | Fetch conversation history only on explicit chat open, with cached context and older pages on demand; no upfront bulk download or new alerts from history | Discord phase 2; may defer to phase 3 |
 | CLIENT-01 | Full TUI mail, Teams and Discord workspaces in additional windows | Later delivery |
 
 “First usable release” can be delivered in incremental milestones. Do not represent all integrations as complete merely because a shared interface or mock exists.
@@ -72,7 +73,7 @@ Respect Omarchy DND for sounds as well as toasts. Clicking an alert selects its 
 
 ## Later full clients
 
-The full mail TUI should add folders, search, threading, composition, replies, forwarding, attachments and account management. Teams should add richer supported conversation/channel navigation and history. Discord must prioritise personal DM history and replies, then expand towards a full client; server channels are lower priority. All use the same identities, drafts, settings and backend. This does not imply complete feature parity with every official client, voice/video support, or unrestricted Discord personal-account access.
+The full mail TUI should add folders, search, threading, composition, replies, forwarding, attachments and account management. Teams should add richer supported conversation/channel navigation and history. Discord must prioritise new personal DMs and quick replies, add on-demand chat history in phase 2 (or 3 if needed), then expand towards a fuller client; server channels are lower priority. All use the same identities, drafts, settings and backend. This does not imply complete feature parity with every official client, voice/video support, or unrestricted Discord personal-account access.
 
 ## Proposed performance targets
 

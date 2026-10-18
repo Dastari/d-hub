@@ -83,8 +83,10 @@ For each implemented milestone record command/test or manual steps, date, platfo
 | ID | Scenario | Expected |
 | --- | --- | --- |
 | D01 | Owner receives a personal DM, especially from their son | New item joins the same feed in arrival order; channels/bot DMs are not a substitute |
-| D02 | Open a personal Discord feed item | Full DM conversation history and quick reply inside d-hub; currently unmet |
-| D03 | Optional notification mode is explicitly enabled | Capture matching desktop previews only; label missing history, in-app reply, remote unread and exact-conversation link; do not pass D01/D02 based on this fallback |
+| D02 | Reply to a new personal Discord DM, phase 1 | Correct account/conversation and locked recipient; accepted reply dismisses the answered item; historical backfill is not required; currently unmet |
+| D03 | Optional notification mode is explicitly enabled | Capture matching desktop previews only; label missing history, in-app reply, remote unread and exact-conversation link; do not pass the phase 1 personal arrival/reply criteria based on this fallback |
+| D04 | Explicitly open a chat, phase 2 (may defer to 3) | Show cached context and fetch a bounded recent page; older pages load on request/scroll with loading, retry and end states; no startup-wide history requirement |
+| D05 | History loads after switching chats or while another reply is drafted | Reject stale conversation results, deduplicate overlap, preserve reader position and locked draft; no fresh feed arrivals/alerts or blanket read marking from backfill |
 | F01 | Explicitly select/open an unread item | Hollow read dot persists; pending remote flag intent is revision checked; remote sync remains pending real adapters |
 | F02 | Reply accepted while another item is selected | Dismiss the submitted target’s original incoming item, preserving the other item |
 | F03 | Reply fails or acceptance is uncertain | Keep original item and draft; do not dismiss or blindly resend |
