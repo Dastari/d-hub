@@ -457,3 +457,131 @@ fn connection_checks_are_offered_for_mail_and_teams_and_results_show_on_the_page
     assert!(frame.contains("✗ Synced chats"));
     assert!(frame.contains("Test connection"));
 }
+
+#[test]
+fn values_are_edited_in_their_row_without_leaving_the_page() {
+    let mut app = settings_app();
+    let draft = app.session.composer.draft.clone();
+    open(&mut app, SettingsPage::Section(SettingsSection::Ai));
+    select(&mut app, &Item::Field("ai.model".into()));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::EditSetting);
+    press(&mut app, KeyCode::Char('2'));
+    let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    terminal
+        .draw(|frame| {
+            super::super::draw(frame, &mut app, Duration::ZERO);
+        })
+        .unwrap();
+    let screen: Vec<String> = (0..30)
+        .map(|y| {
+            (0..110)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    let row = screen
+        .iter()
+        .position(|line| line.contains("› Model"))
+        .expect("the page stays visible while editing");
+    assert!(screen[row].contains("jev-latest2"), "{}", screen[row]);
+    assert!(screen[row + 1].contains("Enter saves · Esc cancels"));
+    assert!(
+        screen
+            .iter()
+            .any(|line| line.contains("Settings › AI decisions"))
+    );
+    assert!(!screen.iter().any(|line| line.contains("Draft stays")));
+    let cursor = terminal.get_cursor_position().unwrap();
+    assert_eq!(cursor.y as usize, row, "cursor sits in the row");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::Settings);
+    assert_eq!(app.settings.ai.model, "jev-latest2");
+
+    // Esc abandons the typed value; invalid values stay in the row with the reason.
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode, Mode::Settings);
+    assert_eq!(app.settings.ai.model, "jev-latest2");
+    select(&mut app, &Item::Field("ai.timeout_ms".into()));
+    press(&mut app, KeyCode::Enter);
+    edit(&mut app, "5");
+    assert_eq!(app.mode, Mode::EditSetting, "rejected values keep editing");
+    assert!(app.notice.contains("100"), "{}", app.notice);
+    assert_eq!(app.session.composer.draft, draft);
+}
+
+#[test]
+fn prompts_wrap_in_place_and_commands_open_their_row() {
+    let mut app = settings_app();
+    app.mode = Mode::Navigate;
+    super::super::run_command(&mut app, ":spam prompt");
+    assert_eq!(app.mode, Mode::EditSetting);
+    assert_eq!(
+        app.settings_page,
+        SettingsPage::Section(SettingsSection::Spam)
+    );
+    assert_eq!(
+        items(&app)[app.setting_index],
+        Item::Field("spam.prompt".into())
+    );
+    let screen = super::super::snapshot(&mut app, 110, 34).unwrap();
+    assert!(screen.contains("Settings › Spam filtering"));
+    assert!(screen.contains("Ctrl+S saves · Enter adds a line · Esc cancels"));
+    // The default prompt wraps at words across rows instead of scrolling sideways.
+    let prompt_rows = screen
+        .lines()
+        .filter(|line| line.contains("Is this unsolicited") || line.contains("contain a link."))
+        .count();
+    assert_eq!(prompt_rows, 2, "{screen}");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::EditSetting, "Enter adds a line");
+    press(&mut app, KeyCode::Char('K'));
+    super::super::key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        4,
+        &mut None,
+        &mut None,
+        None,
+    );
+    assert_eq!(app.mode, Mode::Settings);
+    assert!(app.settings.spam.prompt.ends_with("link.\nK"));
+
+    // An unknown profile refuses rather than opening an editor for nothing.
+    super::super::run_command(&mut app, ":profile prompt nobody");
+    assert_ne!(app.mode, Mode::EditSetting);
+    assert!(app.notice.contains("nobody"), "{}", app.notice);
+}
+
+#[test]
+fn credentials_typed_from_settings_are_masked_in_their_row() {
+    let mut app = settings_app();
+    app.settings
+        .add_account("home-mail", Provider::ICloud)
+        .unwrap();
+    open(&mut app, SettingsPage::Account("home-mail".into()));
+    select(&mut app, &Item::Action(Action::SignIn("home-mail".into())));
+    app.mode = Mode::Secret;
+    app.command_origin = Mode::Settings;
+    app.command = Editor::new("fictional-secret-marker");
+    let screen = super::super::snapshot(&mut app, 110, 34).unwrap();
+    assert!(!screen.contains("fictional-secret-marker"));
+    let row = screen.lines().find(|l| l.contains("› Sign in")).unwrap();
+    assert!(row.contains(&"•".repeat(23)), "{row}");
+    assert!(screen.contains("Enter stores it in the keyring"));
+    let narrow = super::super::snapshot(&mut app, 40, 34).unwrap();
+    assert!(!narrow.contains("fictional-secret-marker"));
+}
+
+#[test]
+fn soft_rows_break_at_spaces_and_split_long_words() {
+    let text = "aaa bbb ccc\nabcdefghij";
+    let rows: Vec<&str> = render::soft_rows(text, 7)
+        .into_iter()
+        .map(|(s, e)| &text[s..e])
+        .collect();
+    assert_eq!(rows, ["aaa ", "bbb ccc", "abcdefg", "hij"]);
+    assert_eq!(render::soft_rows("", 5), [(0, 0)]);
+}

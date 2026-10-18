@@ -139,14 +139,7 @@ pub fn parse_provider(value: &str) -> Result<Provider> {
 }
 
 pub(super) fn edit_setting(app: &mut App, name: &str) {
-    match app.settings.value(name) {
-        Ok(value) => {
-            app.command = Editor::new(&value);
-            app.edit_key = Some(name.into());
-            app.mode = Mode::EditSetting;
-        }
-        Err(e) => app.notice = e.to_string(),
-    }
+    settings::edit(app, name);
 }
 
 pub(super) fn open_discord(app: &mut App) {

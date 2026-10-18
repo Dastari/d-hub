@@ -4,7 +4,7 @@ Use one typed settings registry to describe keys, types, defaults, validation, s
 
 ## Implemented settings
 
-The strict TOML schema remains `schema_version = 1`; older flat configs load with defaults for new fields. The shared `Settings` validation/persistence path powers `d-hub settings`, navigation `,`, and `config list|get|set|reset|validate|export`. Enter opens an editor, Ctrl+s saves, Escape cancels, and Left/Right cycles choices in settings. CLI `config set KEY VALUE` accepts `--file PATH` instead of VALUE for multiline prompts or JSON collections. Unknown fields and invalid values fail atomically. Files are private. For standalone demo/settings surfaces, close the running surface before CLI file edits. For a shared drawer, use `config --socket PATH …` so the service coordinates revisions and writes.
+The strict TOML schema remains `schema_version = 1`; older flat configs load with defaults for new fields. The shared `Settings` validation/persistence path powers `d-hub settings`, navigation `,`, and `config list|get|set|reset|validate|export`. In settings, Enter edits a value inside its row (Enter saves single values, Ctrl+s saves multiline prompts), Escape cancels, and Left/Right cycles choices. CLI `config set KEY VALUE` accepts `--file PATH` instead of VALUE for multiline prompts or JSON collections. Unknown fields and invalid values fail atomically. Files are private. For standalone demo/settings surfaces, close the running surface before CLI file edits. For a shared drawer, use `config --socket PATH …` so the service coordinates revisions and writes.
 
 | Keys | Default / behaviour |
 | --- | --- |

@@ -1,4 +1,5 @@
 //! Settings layout: breadcrumb, optional page list, wrapped rows, notice and footer.
+//! Values and credentials are typed into their own row; there is no separate edit screen.
 use super::*;
 use std::collections::BTreeMap;
 use unicode_width::UnicodeWidthStr;
@@ -130,7 +131,11 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
 
-    let footer: Vec<Line<'static>> = if inner.width >= 100 {
+    let editing = inline(app);
+    // While a row is editing, its own hint replaces the navigation keys.
+    let footer: Vec<Line<'static>> = if editing.is_some() {
+        vec![]
+    } else if inner.width >= 100 {
         vec![Line::styled(
             "↑↓ select · Enter open/edit · ←→ change · Esc back · Tab section · PgUp/PgDn · : commands · q close",
             Style::default().fg(p.muted),
@@ -229,12 +234,15 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
     };
     let mut lines = Vec::new();
     let mut ranges = Vec::new();
+    // Where the in-place editor goes: first line, column, width and height within `lines`.
+    let mut slot: Option<(usize, u16, u16, u16)> = None;
     for (index, item) in rows.iter().enumerate() {
         let row = describe(app, item, &entries, p);
         let selected = index == app.setting_index;
+        let editor = editing.filter(|_| selected);
         let start = lines.len();
         let names = wrapped(&safe_text(&row.label), name_width);
-        let values = if row.value.is_empty() {
+        let values = if row.value.is_empty() || editor.is_some() {
             vec![]
         } else {
             wrapped(&preview(&row.value, value_width * 2), value_width)
@@ -295,6 +303,31 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
                 ]));
             }
         }
+        if let Some(kind) = editor {
+            let tall = kind == (Inline::Text { multiline: true });
+            if wide && !tall {
+                // Single values replace the value column on the label's first line.
+                slot = Some((start, name_width as u16 + 4, value_width as u16, 1));
+            } else {
+                let height = if tall {
+                    (soft_rows(&app.command.text, width.saturating_sub(4)).len() + 1)
+                        .clamp(3, (viewport.height as usize).saturating_sub(4).max(3))
+                } else {
+                    1
+                };
+                slot = Some((
+                    lines.len(),
+                    4,
+                    width.saturating_sub(4).max(1) as u16,
+                    height as u16,
+                ));
+                lines.extend((0..height).map(|_| Line::default()));
+            }
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(actions::edit_hint(kind), Style::default().fg(p.second)),
+            ]));
+        }
         let mut note = safe_text(&row.note);
         if selected && let Item::Field(name) = item {
             note = if note.is_empty() {
@@ -336,6 +369,13 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
     } else if selected.end > app.settings_scroll + height {
         app.settings_scroll = selected.end - height;
     }
+    if let Some((line, _, _, rows)) = slot {
+        let end = line + rows as usize + 1;
+        if end > app.settings_scroll + height {
+            app.settings_scroll = end.saturating_sub(height);
+        }
+        app.settings_scroll = app.settings_scroll.min(line);
+    }
     // Backfill near the end so a tall window never leaves most rows blank.
     app.settings_scroll = app.settings_scroll.min(lines.len().saturating_sub(height));
     for (index, range) in ranges.iter().enumerate() {
@@ -374,5 +414,89 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
         ),
         viewport,
     );
+    if let (Some(kind), Some((line, x, w, rows))) = (editing, slot) {
+        let y = viewport.y + line.saturating_sub(app.settings_scroll) as u16;
+        let field = Rect::new(viewport.x + x, y, w, rows).intersection(viewport);
+        draw_editor(frame, field, p, app, kind);
+    }
     hit
+}
+
+/// The editor inside its row: an input-coloured box with the terminal cursor.
+fn draw_editor(frame: &mut Frame, field: Rect, p: Palette, app: &mut App, kind: Inline) {
+    if field.is_empty() {
+        return;
+    }
+    let style = Style::default().fg(p.fg).bg(p.surface);
+    let (content, scroll, cursor) = if kind == (Inline::Text { multiline: true }) {
+        // Prompts wrap at words like the rest of the page; the cursor follows the wrapped rows.
+        let text = &app.command.text;
+        let rows = soft_rows(text, field.width as usize);
+        let cursor = app.command.cursor;
+        let row = rows.iter().rposition(|(s, _)| *s <= cursor).unwrap_or(0);
+        let column = text[rows[row].0..cursor].width();
+        let height = field.height as usize;
+        app.command.top = app
+            .command
+            .top
+            .min(row)
+            .max((row + 1).saturating_sub(height));
+        let content = rows
+            .iter()
+            .map(|(s, e)| &text[*s..*e])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let visible = (row - app.command.top) as u16;
+        (
+            content,
+            (app.command.top as u16, 0),
+            (visible, column as u16),
+        )
+    } else if kind == Inline::Secret {
+        // Only the length is shown; the cursor column counts mask characters.
+        let column = app.command.text[..app.command.cursor].chars().count();
+        let left = column.saturating_sub(field.width as usize - 1);
+        let mask = "•".repeat(app.command.text.chars().count());
+        (mask, (0, left as u16), (0, (column - left) as u16))
+    } else {
+        let cursor = app
+            .command
+            .viewport(field.width as usize, field.height as usize);
+        (
+            app.command.text.clone(),
+            (app.command.top as u16, app.command.left as u16),
+            cursor,
+        )
+    };
+    frame.render_widget(Paragraph::new(content).style(style).scroll(scroll), field);
+    frame.set_cursor_position((field.x + cursor.1, field.y + cursor.0));
+}
+
+/// Byte ranges of each visual row when `text` wraps at `width` columns, breaking after spaces
+/// where possible. Hard newlines always start a row.
+pub(super) fn soft_rows(text: &str, width: usize) -> Vec<(usize, usize)> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut offset = 0;
+    for line in text.split('\n') {
+        let (mut start, mut used, mut space) = (0, 0, None);
+        for (i, grapheme) in line.grapheme_indices(true) {
+            let w = grapheme.width();
+            if used + w > width && i > start {
+                let cut = space.filter(|s| *s > start).unwrap_or(i);
+                rows.push((offset + start, offset + cut));
+                used = line[cut..i].width();
+                start = cut;
+                space = None;
+            }
+            used += w;
+            if grapheme == " " {
+                space = Some(i + 1);
+            }
+        }
+        rows.push((offset + start, offset + line.len()));
+        offset += line.len() + 1;
+    }
+    rows
 }

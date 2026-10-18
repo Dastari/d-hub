@@ -1,4 +1,4 @@
-//! Page actions and the edit overlay: every change goes through the shared typed settings path.
+//! Page actions and in-place edits: every change goes through the shared typed settings path.
 use super::*;
 use crate::app::NewAccount;
 use crate::config::SettingRow;
@@ -20,17 +20,12 @@ pub(in crate::tui) fn multiline(name: &str) -> bool {
         || matches!(name, "profiles" | "accounts")
 }
 
-pub(in crate::tui) fn edit_title(name: &str) -> String {
-    let label = match name {
-        NEW_ID => "New account ID".into(),
-        NEW_NAME => "New account display name".into(),
-        NEW_PROFILE => "New focus profile ID".into(),
-        _ => format!("{} · {name}", field_label(name)),
-    };
-    if multiline(name) {
-        format!("{label} · Ctrl+s save · Esc cancel")
-    } else {
-        format!("{label} · Enter save · Esc cancel")
+/// Keys while a row is editing in place.
+pub(super) fn edit_hint(kind: Inline) -> &'static str {
+    match kind {
+        Inline::Text { multiline: true } => "Ctrl+S saves · Enter adds a line · Esc cancels",
+        Inline::Text { multiline: false } => "Enter saves · Esc cancels",
+        Inline::Secret => "Hidden as you type · Enter stores it in the keyring · Esc cancels",
     }
 }
 
@@ -40,7 +35,7 @@ pub(super) fn begin_edit(app: &mut App, name: &str, value: &str) {
     app.mode = Mode::EditSetting;
 }
 
-/// Saves an edit from the overlay; pseudo-keys belong to page-local forms.
+/// Saves an in-place edit; pseudo-keys belong to page-local forms.
 pub(in crate::tui) fn commit_edit(app: &mut App, name: &str, value: &str) -> Result<()> {
     match name {
         NEW_ID => {

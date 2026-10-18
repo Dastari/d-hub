@@ -14,7 +14,7 @@ use self::{
     status::{Health, health, health_style, short_status, signed_in, stats},
 };
 pub(super) use self::{
-    actions::{commit_edit, edit_title, multiline},
+    actions::{commit_edit, multiline},
     render::draw,
 };
 use super::*;
@@ -53,6 +53,68 @@ pub(crate) enum Item {
     Action(Action),
     New(NewField),
 }
+/// A value or credential being typed into the selected row; the page stays visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Inline {
+    Text { multiline: bool },
+    Secret,
+}
+
+pub(in crate::tui) fn inline(app: &App) -> Option<Inline> {
+    match app.mode {
+        Mode::EditSetting => Some(Inline::Text {
+            multiline: app.edit_key.as_deref().is_some_and(multiline),
+        }),
+        Mode::Secret if app.command_origin == Mode::Settings => Some(Inline::Secret),
+        _ => None,
+    }
+}
+
+/// Opens the page holding a setting with that row editing in place (e.g. `:spam prompt`).
+pub(in crate::tui) fn edit(app: &mut App, name: &str) {
+    let value = match app.settings.value(name) {
+        Ok(value) => value,
+        Err(e) => {
+            app.notice = e.to_string();
+            return;
+        }
+    };
+    let item = Item::Field(name.into());
+    let pages: Vec<_> = SettingsSection::ALL
+        .into_iter()
+        .map(SettingsPage::Section)
+        .chain(
+            app.settings
+                .profiles
+                .iter()
+                .map(|p| SettingsPage::Profile(p.id.clone())),
+        )
+        .chain(
+            app.settings
+                .accounts
+                .iter()
+                .map(|a| SettingsPage::Account(a.id.clone())),
+        )
+        .collect();
+    let current = app.settings_page.clone();
+    let mut found = None;
+    for page in pages {
+        app.settings_page = page.clone();
+        if items(app).contains(&item) {
+            found = Some(page);
+            break;
+        }
+    }
+    app.settings_page = current;
+    match found {
+        Some(page) => {
+            open_at(app, page, &item);
+            begin_edit(app, name, &value);
+        }
+        None => app.notice = format!("{name} has no settings row · use d-hub config set {name}"),
+    }
+}
+
 pub(super) fn account<'a>(app: &'a App, id: &str) -> Option<&'a AccountConfig> {
     app.settings.accounts.iter().find(|a| a.id == id)
 }

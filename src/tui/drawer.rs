@@ -33,6 +33,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         return HitAreas::default();
     }
     if app.mode == Mode::Settings
+        || settings::inline(app).is_some()
         || (app.mode == Mode::Command && app.command_origin == Mode::Settings)
     {
         let hit = settings::draw(frame, area, p, app);
@@ -330,12 +331,6 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
             "Text and attachments will be removed.\n\ny confirms · n / Esc keeps the draft",
             0,
         ),
-        Mode::EditSetting => {
-            let title = settings::edit_title(app.edit_key.as_deref().unwrap_or("Setting"));
-            let cursor_row = app.command.position().0 as u16;
-            let scroll = cursor_row.saturating_sub(area.height.saturating_sub(8));
-            overlay(frame, area, p, &title, &app.command.text, scroll);
-        }
         Mode::Secret => overlay(
             frame,
             area,
