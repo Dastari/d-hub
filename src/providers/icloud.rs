@@ -175,13 +175,80 @@ fn check_smtp(account: &AccountConfig, password: &str) -> check::Step {
         Err(e) => check::Step::failed("Sending", e),
     }
 }
-pub fn sync(account: &AccountConfig, password: &str, cursor: Value) -> Result<Batch> {
-    let mut session = connect(account, password)?;
-    let result = sync_session(account, &mut session, cursor);
-    let _ = session.logout();
-    result
+type Open<T> = Box<dyn FnMut(&AccountConfig, &str) -> Result<imap::Session<T>> + Send>;
+/// The account worker's signed-in IMAP session, reused across polls, read changes and send
+/// checks. Logging in on every 30-second poll is roughly 2,900 iCloud sign-ins a day.
+pub struct Connection<T: std::io::Read + std::io::Write = native_tls::TlsStream<TcpStream>> {
+    open: Open<T>,
+    session: Option<(Vec<u8>, imap::Session<T>)>,
 }
-fn sync_session<T: std::io::Read + std::io::Write>(
+impl Default for Connection {
+    fn default() -> Self {
+        Self::new(Box::new(connect))
+    }
+}
+impl<T: std::io::Read + std::io::Write> Connection<T> {
+    pub fn new(open: Open<T>) -> Self {
+        Self {
+            open,
+            session: None,
+        }
+    }
+    /// Runs `operation` on the open session, signing in only when there is none, the
+    /// username or password changed, or the server dropped the idle connection.
+    pub fn with<R>(
+        &mut self,
+        account: &AccountConfig,
+        password: &str,
+        mut operation: impl FnMut(&mut imap::Session<T>) -> Result<R>,
+    ) -> Result<R> {
+        use sha2::{Digest, Sha256};
+        let identity = Sha256::digest(format!("{}\0{password}", account.username)).to_vec();
+        match self.session.take() {
+            Some((saved, mut session)) if saved == identity => match operation(&mut session) {
+                Ok(value) => {
+                    self.session = Some((saved, session));
+                    return Ok(value);
+                }
+                // Only a lost connection is retried; a refusal would fail again.
+                Err(e) if !disconnected(&e) => return Err(e),
+                Err(_) => {}
+            },
+            Some((_, mut session)) => {
+                let _ = session.logout();
+            }
+            None => {}
+        }
+        let mut session = (self.open)(account, password)?;
+        let result = operation(&mut session);
+        match &result {
+            Err(e) if disconnected(e) => {}
+            _ => self.session = Some((identity, session)),
+        }
+        result
+    }
+}
+impl<T: std::io::Read + std::io::Write> Drop for Connection<T> {
+    fn drop(&mut self) {
+        if let Some((_, mut session)) = self.session.take() {
+            let _ = session.logout();
+        }
+    }
+}
+fn disconnected(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<imap::error::Error>(),
+            Some(
+                imap::error::Error::Io(_)
+                    | imap::error::Error::ConnectionLost
+                    | imap::error::Error::Tls(_)
+                    | imap::error::Error::Parse(_)
+            )
+        ) || cause.is::<std::io::Error>()
+    })
+}
+pub fn sync_session<T: std::io::Read + std::io::Write>(
     account: &AccountConfig,
     session: &mut imap::Session<T>,
     mut cursor: Value,
@@ -351,9 +418,9 @@ fn sync_session<T: std::io::Read + std::io::Write>(
         .into(),
     })
 }
-pub fn unread(
+pub fn unread<T: std::io::Read + std::io::Write>(
+    session: &mut imap::Session<T>,
     account: &AccountConfig,
-    password: &str,
     remote: &RemoteMessage,
     unread: bool,
 ) -> Result<()> {
@@ -369,7 +436,6 @@ pub fn unread(
     if id != &account.id {
         bail!("Account mismatch");
     }
-    let mut session = connect(account, password)?;
     let selected = session.select(mailbox)?;
     if selected.uid_validity != Some(*uid_validity) {
         bail!("Mailbox identity changed; original message is unavailable");
@@ -385,7 +451,6 @@ pub fn unread(
             "+FLAGS.SILENT (\\Seen)"
         },
     )?;
-    let _ = session.logout();
     Ok(())
 }
 pub fn build_reply(
@@ -420,6 +485,7 @@ pub fn build_reply(
     ))?)
 }
 pub fn send(
+    connection: &mut Connection,
     account: &AccountConfig,
     password: &str,
     item: &Item,
@@ -430,7 +496,7 @@ pub fn send(
         Err(_) => return SendResult::Failed("Invalid sender, recipient or reply headers".into()),
     };
     // Check UIDVALIDITY again immediately before submitting; a reset cannot redirect a reply.
-    let validation = (|| -> Result<()> {
+    let validation = connection.with(account, password, |session| {
         let RemoteMessage::Imap {
             mailbox,
             uid_validity,
@@ -440,15 +506,13 @@ pub fn send(
         else {
             bail!("Invalid identity")
         };
-        let mut session = connect(account, password)?;
         if session.select(mailbox)?.uid_validity != Some(*uid_validity)
             || session.uid_search(format!("UID {uid}"))?.is_empty()
         {
             bail!("Original message is unavailable");
         }
-        let _ = session.logout();
         Ok(())
-    })();
+    });
     if validation.is_err() {
         return SendResult::Failed(
             "Cannot validate original message; reconnect or use the original client".into(),
@@ -614,6 +678,90 @@ mod tests {
         let commands = commands.lock().unwrap();
         assert!(commands.iter().all(|c| !c.contains("BODY[]")));
         assert!(commands.iter().any(|c| c.contains("BODY.PEEK[HEADER]")));
+    }
+    #[test]
+    fn polls_reuse_one_sign_in_until_the_server_drops_it_or_the_password_changes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let logins = Arc::new(Mutex::new(Vec::new()));
+        let observed = logins.clone();
+        let server = std::thread::spawn(move || {
+            // Connection 1 serves two polls and then drops; 2 and 3 serve one poll each.
+            for polls in [2, 1, 1] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                write!(stream, "* OK fictional IMAP\r\n").unwrap();
+                let mut selects = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let tag = line.split_whitespace().next().unwrap().to_owned();
+                    let upper = line.to_uppercase();
+                    if upper.contains("LOGIN") {
+                        observed.lock().unwrap().push(line.clone());
+                    } else if upper.contains("SELECT") {
+                        if selects == polls {
+                            break;
+                        }
+                        selects += 1;
+                        write!(stream, "* 0 EXISTS\r\n* OK [UIDVALIDITY 7] validity\r\n").unwrap();
+                    } else if upper.contains("LOGOUT") {
+                        write!(stream, "* BYE\r\n{tag} OK bye\r\n").unwrap();
+                        break;
+                    }
+                    write!(stream, "{tag} OK complete\r\n").unwrap();
+                }
+            }
+        });
+        let mut connection = Connection::new(Box::new(move |account, password| {
+            let mut client = imap::Client::new(TcpStream::connect(address)?);
+            client.read_greeting()?;
+            client
+                .login(&account.username, password)
+                .map_err(|(e, _)| e.into())
+        }));
+        let a = account();
+        let poll = |connection: &mut Connection<TcpStream>, password| {
+            connection
+                .with(&a, password, |s| sync_session(&a, s, Value::Null))
+                .map(|b| b.status)
+        };
+        poll(&mut connection, "first").unwrap();
+        poll(&mut connection, "first").unwrap();
+        assert_eq!(
+            logins.lock().unwrap().len(),
+            1,
+            "the second poll reused the session"
+        );
+        // The server closed the idle connection: the poll signs in again and still succeeds.
+        poll(&mut connection, "first").unwrap();
+        assert_eq!(logins.lock().unwrap().len(), 2);
+        // A changed app-specific password never reuses the old session.
+        poll(&mut connection, "second").unwrap();
+        drop(connection);
+        server.join().unwrap();
+        let logins = logins.lock().unwrap();
+        assert_eq!(logins.len(), 3);
+        assert!(logins[2].contains("second"));
+        // A refusal is not retried with another sign-in.
+        let mut refused = Connection::new(Box::new(|_: &AccountConfig, _: &str| {
+            bail!("iCloud login refused")
+        }));
+        let mut attempts = 0;
+        assert!(
+            refused
+                .with(&a, "x", |_: &mut imap::Session<TcpStream>| {
+                    attempts += 1;
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(attempts, 0);
     }
     fn smtp(accept: bool) -> (lettre::SmtpTransport, std::thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -216,3 +216,26 @@ At the owner's request, settings no longer replace the page with a full-screen e
 ## v0.4.2 publication
 
 [v0.4.2](https://github.com/dastari/d-hub/releases/tag/v0.4.2) is published (settings values edited in place). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39161268731) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39161268853) passed. Locally, all 168 Rust tests, formatting and warnings-denied Clippy passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.2, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Provider follow-ups: iCloud connection reuse, Teams updates, Office 365 quoting
+
+These address the known gaps recorded after v0.4.1. All were verified offline against fake servers; no real account was used.
+- **iCloud reconnected on every poll** (about 2,900 sign-ins a day at the default 30 seconds). The account worker now keeps one IMAP session for polls, read changes and the pre-send check. A fake IMAP server confirms two polls use one LOGIN, a server-closed connection signs in again and the poll still succeeds, a changed password never reuses the old session, and a refused sign-in is not retried.
+- **Teams edits and reactions resurfaced old messages.** Cursors now record the start of each pass. A fake Graph sequence confirms that a month-old message someone reacted to is not offered on the first sync, and that a later change to an already offered message is an update. A service test confirms an edit replaces the captured text and keeps its time and the locked draft, a reaction to a never-offered message is not imported, only the genuinely new message counts as an arrival, and a deletion removes the reply target without touching the draft.
+- **Quoted Teams replies showed a false files marker.** A quoted reply now shows `> sender: preview` above the reply; files, cards and images get their own markers.
+- **Office 365 replies omitted the quoted original.** Replies now use Outlook's createReply draft. A fake Graph run checks createReply, then PATCH with the reply above the quoted original and only the frozen recipient, then send. A refused PATCH deletes the draft and reports "not sent" with Microsoft's code; a refusal of createReply makes no further request; a server failure on the final send stays uncertain. HTML reply text is escaped and placed after `<body>`.
+- **No Folders field in the TUI for iCloud/Office 365.** Account pages now have **Folders** (default INBOX/inbox) with provider-specific help, edited in place; the Office 365 check lists folder IDs. The Test connection note no longer says "lists Teams chats" for mail.
+- **Device-code sign-in had no fake tests.** A fake identity endpoint checks the code notice, `authorization_pending`, `slow_down` adding five seconds, the scopes per provider, storing only the refresh token, and that a declined login, AADSTS7000218 (shown without its trace ID), a non-HTTPS verification URI, a missing refresh token and an expired code store nothing.
+
+All 177 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. Whether iCloud SMTP saves a Sent copy is still unknown, and real-account acceptance remains with the owner.
+
+## Drawer readability: body-only mail preview, preview paging, Delete dismissal, growing reply box
+
+Changes after owner feedback from a WSL terminal showing iCloud mail.
+- **Mail preview showed too much.** The preview now shows only the body text, under a dotted rule. Sender, address, subject and date stay in the feed row and in the reader. Feed headings, dismissal notices, reader titles and the composer show the sender's display name, not the raw `Name <address>` header.
+- **Paging the preview.** PageUp/PageDown now page the preview, not the feed (Ctrl+d/u still page the feed), with `PgUp`/`PgDn` markers. A new selection opens at its default view.
+- **Dismissing was hard to find.** Delete now dismisses and marks read, but only before a reply has started. With text in the composer it edits the text, and it never restores. The footer and help list it, and footer hints that don't fit are dropped, keeping `? help`.
+- **Reply box size.** The reply box starts one line tall and grows with the draft to six lines.
+- **Stray characters on screen.** Text sanitising now also removes invisible formatting characters common in mail preheaders: soft hyphens, combining grapheme joiners, zero-width spaces and non-joiners, Hangul fillers, bidi controls, BOMs, tag characters and non-emoji variation selectors. Emoji joiners and emoji presentation selectors are kept. This is the likely cause, because these characters are where the layout's width table and the terminal disagree. The exact characters in the owner's mail were not available, so it has not been confirmed on the WSL terminal.
+
+New tests cover each of these: TestBackend renders of the preview, the reply box and the feed, plus a key-dispatch test of Delete. All 183 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. Only fictional data was used.

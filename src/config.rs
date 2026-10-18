@@ -430,7 +430,20 @@ impl Settings {
                 (
                     "resources",
                     a.resources.join("\n"),
-                    "Authorised channel/chat resources, one per line",
+                    match a.provider {
+                        crate::domain::Provider::ICloud => {
+                            "IMAP folders to sync, one per line, e.g. INBOX or Archive; empty syncs INBOX"
+                        }
+                        crate::domain::Provider::Office365 => {
+                            "Mail folders to sync, one per line: inbox, archive or a folder ID from Test connection; empty syncs inbox"
+                        }
+                        crate::domain::Provider::Teams => {
+                            "Teams chat IDs to sync, one per line; Test connection lists them"
+                        }
+                        crate::domain::Provider::Discord => {
+                            "Authorised channel/chat resources, one per line"
+                        }
+                    },
                 ),
             ] {
                 rows.push(SettingRow::text(

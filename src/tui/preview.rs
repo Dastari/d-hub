@@ -1,5 +1,6 @@
 //! The pane under the feed and the full reader. A chat burst reads as a short transcript with a
-//! time per message; an email shows its sender and full local date above the body.
+//! time per message; an email previews its body alone (the feed row already names the sender,
+//! subject and time) and the reader adds its sender and full local date.
 use super::*;
 use crate::{domain::Message, when};
 use std::ops::Range;
@@ -7,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// "Mira <mira@example.com>" when the reply address differs from the display name.
 fn from(message: &Message) -> String {
-    let sender = safe_text(&message.sender);
+    let sender = crate::domain::display_name(&message.sender);
     let address = message
         .target
         .iter()
@@ -58,16 +59,6 @@ fn layout(
     let muted = Style::default().fg(p.muted);
     let mut lines = vec![];
     if message.is_mail() {
-        let header = format!(
-            "{} · {}",
-            from(message),
-            when::full(message.timestamp, &safe_text(&message.time))
-        );
-        lines.extend(
-            wrapped(&header, width)
-                .into_iter()
-                .map(|l| Line::styled(l, muted)),
-        );
         lines.extend(
             body_lines(&message.body, width)
                 .into_iter()
@@ -121,46 +112,62 @@ fn layout(
     (lines, selected)
 }
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) {
+/// Draws the preview under a dotted rule and returns its page size and the scroll offsets
+/// (relative to the default view) that PageUp/PageDown may reach.
+pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usize, isize, isize) {
+    let muted = Style::default().fg(p.muted);
+    frame.render_widget(
+        Paragraph::new(Line::styled("·".repeat(area.width as usize), muted)),
+        Rect { height: 1, ..area },
+    );
+    let area = padded(Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
+    });
     let Some(message) = app.selected_message() else {
         frame.render_widget(
             text("Select a communication to read its context.", p.muted),
             area,
         );
-        return;
+        return (1, 0, 0);
     };
     let (width, height) = (area.width as usize, area.height as usize);
     let (lines, selected) = layout(app, message, width, p);
-    if lines.len() <= height {
-        frame.render_widget(Paragraph::new(lines), area);
-        return;
-    }
-    // Too long: keep the selected message in view, preferring the newest end of a chat, and
-    // give "more" markers their own lines so they never cover it.
     let total = lines.len();
-    let place = |rows: usize| {
-        if message.is_mail() {
-            0
-        } else {
-            (total - rows).min(selected.start)
-        }
-    };
-    let mut rows = height.saturating_sub(1).max(1);
-    let mut start = place(rows);
-    if height >= 3 && start > 0 && start + rows < total {
-        rows = height - 2;
-        start = place(rows);
+    if total <= height || height == 0 {
+        frame.render_widget(Paragraph::new(lines), area);
+        return (height.max(1), 0, 0);
     }
-    let more = Style::default().fg(p.muted).add_modifier(Modifier::ITALIC);
+    // Too long: "more" markers get their own lines so they never cover text. By default keep
+    // the selected chat message in view (preferring the newest end); mail starts at the top.
+    let rows_from = |start: usize| {
+        let mut rows = height - usize::from(start > 0 && height >= 2);
+        if start + rows < total && rows > 1 {
+            rows -= 1;
+        }
+        rows
+    };
+    let last = total - (height - usize::from(height >= 2)).max(1);
+    let default = if message.is_mail() {
+        0
+    } else {
+        selected.start.min(last)
+    };
+    let start = (default as isize + app.preview_offset()).clamp(0, last as isize) as usize;
+    let rows = rows_from(start);
+    let more = muted.add_modifier(Modifier::ITALIC);
     let mut window = vec![];
     if start > 0 && height >= 2 {
-        window.push(Line::styled("↑ earlier · o reads all", more));
+        window.push(Line::styled("↑ PgUp earlier · o reads all", more));
     }
-    window.extend(lines[start..start + rows].iter().cloned());
+    window.extend(lines[start..(start + rows).min(total)].iter().cloned());
     if start + rows < total && window.len() < height {
-        window.push(Line::styled("↓ more · o reads all", more));
+        window.push(Line::styled("↓ PgDn more · o reads all", more));
     }
     frame.render_widget(Paragraph::new(window), area);
+    let page = height.saturating_sub(2).max(1);
+    (page, -(default as isize), last as isize - default as isize)
 }
 
 /// Title and body for the reader: the full email with its headers, or the chat burst as a
@@ -169,7 +176,7 @@ pub(super) fn reader(app: &App) -> Option<(String, String)> {
     let message = app.reader.as_ref()?;
     let title = format!(
         "{} · {}",
-        safe_text(&message.sender),
+        crate::domain::display_name(&message.sender),
         safe_text(&message.subject)
     );
     if message.is_mail() {
@@ -192,7 +199,7 @@ pub(super) fn reader(app: &App) -> Option<(String, String)> {
         body.push_str(&format!(
             "{} · {}\n{}\n\n",
             when::clock(m.timestamp, &safe_text(&m.time)),
-            safe_text(&m.sender),
+            crate::domain::display_name(&m.sender),
             safe_text(m.body.trim())
         ));
     }
@@ -204,12 +211,14 @@ mod tests {
     use super::super::feed::tests::{app, message};
     use super::*;
 
-    /// Renders only the preview pane.
-    fn pane(app: &App, width: u16, height: u16) -> String {
+    /// Renders only the preview pane (its dotted rule included) and records its scroll bounds.
+    fn pane(app: &mut App, width: u16, height: u16) -> String {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         let p = palette(Theme::Midnight, Duration::ZERO, true);
-        terminal.draw(|f| draw(f, f.area(), p, app)).unwrap();
+        terminal
+            .draw(|f| app.preview_bounds = draw(f, f.area(), p, app))
+            .unwrap();
         let buffer = terminal.backend().buffer();
         (0..height)
             .map(|y| {
@@ -219,6 +228,15 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn find(app: &mut App, id: u64) -> &mut Message {
+        let id = MessageId(id);
+        app.session
+            .messages
+            .iter_mut()
+            .find(|m| m.id == id)
+            .unwrap()
     }
 
     /// Three Discord messages in a row, a Teams message, then an email; real timestamps.
@@ -255,7 +273,7 @@ mod tests {
     fn a_selected_chat_stack_previews_every_message_with_its_time() {
         let mut app = inbox();
         app.select(MessageId(3));
-        let frame = pane(&app, 50, 8);
+        let frame = pane(&mut app, 50, 8);
         let base = 1_792_292_580;
         assert!(frame.contains(&when::day(base + 60).unwrap()), "{frame}");
         assert!(frame.contains("3 messages"), "{frame}");
@@ -277,16 +295,28 @@ mod tests {
     }
 
     #[test]
-    fn email_preview_and_reader_show_the_sender_address_and_full_local_date() {
+    fn email_preview_shows_only_the_body_and_the_reader_adds_sender_and_date() {
         let mut app = inbox();
+        find(&mut app, 5).sender = "Mira <mira@example.invalid>".into();
         app.select(MessageId(5));
         let date = when::full(1_792_292_580 + 300, "");
-        let frame = pane(&app, 120, 6);
+        let frame = pane(&mut app, 120, 6);
+        let mut rows = frame.lines();
         assert!(
-            frame.contains(&format!("Mira <mira@example.invalid> · {date}")),
+            rows.next().unwrap().trim_end().chars().all(|c| c == '·'),
             "{frame}"
         );
-        assert!(frame.contains("Shall we bring a picnic?"));
+        assert_eq!(
+            rows.next().unwrap().trim(),
+            "Shall we bring a picnic?",
+            "{frame}"
+        );
+        for repeated in ["mira@example.invalid", "Sunday", &date] {
+            assert!(
+                !frame.contains(repeated),
+                "{repeated} repeats the feed row: {frame}"
+            );
+        }
         app.open_reader();
         let (title, body) = reader(&app).unwrap();
         assert_eq!(title, "Mira · Sunday");
@@ -294,10 +324,80 @@ mod tests {
     }
 
     #[test]
+    fn page_keys_scroll_a_long_preview_and_a_new_selection_starts_at_the_top() {
+        let mut app = inbox();
+        let body: Vec<_> = (1..=30).map(|n| format!("paragraph {n}")).collect();
+        find(&mut app, 5).body = body.join("\n");
+        app.select(MessageId(5));
+        let frame = pane(&mut app, 40, 7);
+        assert!(
+            frame.contains("paragraph 1\n") || frame.contains("paragraph 1 "),
+            "{frame}"
+        );
+        assert!(frame.contains("PgDn more"), "{frame}");
+        let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+        key(&mut app, page_down, 4, &mut None, &mut None, None);
+        let frame = pane(&mut app, 40, 7);
+        assert!(!frame.contains("paragraph 1 "), "{frame}");
+        assert!(frame.contains("PgUp earlier"), "{frame}");
+        assert_eq!(
+            app.selected,
+            Some(MessageId(5)),
+            "paging never moves the selection"
+        );
+        for _ in 0..20 {
+            key(&mut app, page_down, 4, &mut None, &mut None, None);
+        }
+        let frame = pane(&mut app, 40, 7);
+        assert!(frame.contains("paragraph 30"), "{frame}");
+        assert!(!frame.contains("PgDn more"), "{frame}");
+        let page_up = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
+        key(&mut app, page_up, 4, &mut None, &mut None, None);
+        assert!(!pane(&mut app, 40, 7).contains("paragraph 30"));
+        // Another message, then back: each selection opens at its default view.
+        app.select(MessageId(4));
+        app.select(MessageId(5));
+        assert!(pane(&mut app, 40, 7).contains("paragraph 1 "));
+    }
+
+    #[test]
+    fn delete_dismisses_and_marks_read_only_before_a_reply_is_started() {
+        let mut app = inbox();
+        app.settings.mark_read_on_select = false;
+        app.switch_reply(MessageId(3));
+        let delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+        key(&mut app, delete, 4, &mut None, &mut None, None);
+        for id in 1..=3 {
+            assert!(app.dismissed(MessageId(id)));
+            assert!(
+                !app.session
+                    .messages
+                    .iter()
+                    .any(|m| m.id == MessageId(id) && m.unread)
+            );
+        }
+        assert_eq!(app.selected, Some(MessageId(4)));
+        // Once typing starts Delete edits the reply and dismisses nothing.
+        app.editor.insert("ok");
+        app.update_body();
+        app.editor
+            .key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        key(&mut app, delete, 4, &mut None, &mut None, None);
+        assert_eq!(app.editor.text, "k");
+        assert!(!app.dismissed(MessageId(4)));
+        assert!(
+            app.session
+                .messages
+                .iter()
+                .any(|m| m.id == MessageId(4) && m.unread)
+        );
+    }
+
+    #[test]
     fn long_stacks_keep_the_selected_message_visible_and_point_to_the_reader() {
         let mut app = inbox();
         app.select(MessageId(1));
-        let frame = pane(&app, 30, 3);
+        let frame = pane(&mut app, 30, 3);
         assert!(frame.contains("hey are you around"), "{frame}");
         assert!(frame.contains("o reads all"), "{frame}");
         app.open_reader();

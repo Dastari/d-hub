@@ -122,8 +122,14 @@ pub(super) fn account<'a>(app: &'a App, id: &str) -> Option<&'a AccountConfig> {
 pub(super) fn account_fields(account: &AccountConfig) -> Vec<&'static str> {
     let mut fields = vec!["allow_send"];
     fields.extend(match account.provider {
-        Provider::ICloud => &["username", "poll_seconds"][..],
-        Provider::Office365 => &["username", "tenant", "client_id", "poll_seconds"],
+        Provider::ICloud => &["username", "resources", "poll_seconds"][..],
+        Provider::Office365 => &[
+            "username",
+            "tenant",
+            "client_id",
+            "resources",
+            "poll_seconds",
+        ],
         Provider::Teams => &[
             "username",
             "tenant",

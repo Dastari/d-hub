@@ -730,3 +730,96 @@ fn discord_arrivals_edits_duplicates_deletions_and_replies_preserve_draft_and_ar
         "existing mail cursor/cache identity must not change"
     );
 }
+
+#[test]
+fn teams_edits_and_reactions_update_in_place_and_never_resurface_old_messages() {
+    let dir = directory();
+    let mut a = AccountConfig::new("teams-flow", Provider::Teams);
+    a.username = "owner@example.invalid".into();
+    a.resources = vec!["chat".into()];
+    a.enabled = true;
+    a.allow_send = true;
+    let settings = Settings {
+        accounts: vec![a.clone()],
+        ..Settings::default()
+    };
+    let mut owner = Owner::open(Database::open_mode(dir.path(), &settings, true).unwrap())
+        .unwrap()
+        .with_transport(fake);
+    let make = |id: &str, body: &str, timestamp: u64, partial: bool| Item {
+        account_scope: providers::scope(&a),
+        remote: RemoteMessage::GraphChat {
+            account: a.id.clone(),
+            chat: "chat".into(),
+            message: id.into(),
+        },
+        sender: "Fictional colleague".into(),
+        recipients: vec!["Teams chat chat".into()],
+        subject: "Teams message".into(),
+        body: body.into(),
+        timestamp,
+        unread: None,
+        message_id: String::new(),
+        references: String::new(),
+        deleted: false,
+        partial,
+    };
+    let enqueue = |items: Vec<Item>| {
+        scenarios()
+            .lock()
+            .unwrap()
+            .entry(a.id.clone())
+            .or_default()
+            .batches
+            .push_back(Batch {
+                items,
+                cursor: Value::Null,
+                status: "Fictional Teams connected".into(),
+            });
+    };
+    enqueue(vec![make("first", "Lunch at noon?", 2_000, false)]);
+    drive(&mut owner, |o| o.app.session.messages.len() == 1);
+    let id = owner.app.session.messages[0].id;
+    owner
+        .actions(
+            owner.revision,
+            &[Action::Select {
+                id,
+                prepare_reply: true,
+            }],
+        )
+        .unwrap();
+    compose(&mut owner, Event::Body("Yes, see you there".into()));
+    let draft = owner.app.session.composer.draft.clone();
+    let arrivals = owner.app.new_items;
+    // An edit to the captured message, a reaction to a month-old message never offered,
+    // and a genuinely new message.
+    enqueue(vec![
+        make("first", "Lunch at 12:30?", 2_000, true),
+        make("month-old", "Old announcement", 1_000, true),
+        make("second", "Booked a table", 3_000, false),
+    ]);
+    owner.refresh();
+    drive(&mut owner, |o| o.app.session.messages.len() == 2);
+    let messages = &owner.app.session.messages;
+    assert!(messages.iter().all(|m| m.body != "Old announcement"));
+    let first = messages.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(first.body, "Lunch at 12:30?");
+    assert_eq!(first.timestamp, 2_000);
+    assert_eq!(owner.app.new_items, arrivals + 1);
+    assert_eq!(owner.app.session.composer.draft, draft);
+    // A deletion of the replied-to message keeps the draft and removes its reply target.
+    let mut deleted = make("first", "", 2_000, true);
+    deleted.deleted = true;
+    enqueue(vec![deleted]);
+    owner.refresh();
+    drive(&mut owner, |o| {
+        o.app
+            .session
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .is_some_and(|m| m.target.is_none())
+    });
+    assert_eq!(owner.app.session.composer.draft, draft);
+}

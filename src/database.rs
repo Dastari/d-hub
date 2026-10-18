@@ -159,11 +159,13 @@ impl Database {
     ) -> Result<crate::domain::MessageId> {
         let key = serde_json::to_string(&(&record.remote, &record.account_scope))?;
         let mut record = record.clone();
-        let discord = matches!(
+        // Chat edits, reactions and deletions arrive as partial updates of a captured message.
+        let chat = matches!(
             record.remote,
             crate::read_state::RemoteMessage::DiscordDm { .. }
+                | crate::read_state::RemoteMessage::GraphChat { .. }
         );
-        if record.partial || discord {
+        if record.partial || chat {
             let previous: Option<String> = self
                 .connection
                 .query_row(
@@ -176,7 +178,7 @@ impl Database {
                 let mut old: crate::providers::Item = serde_json::from_str(&previous)?;
                 if record.partial {
                     old.unread = record.unread.or(old.unread);
-                    if discord {
+                    if chat {
                         // Edits/deletions update captured content, preserving arrival time, read state and frozen recipients.
                         old.deleted |= record.deleted;
                         if !record.deleted {
@@ -185,7 +187,7 @@ impl Database {
                     }
                     record = old;
                 } else if old.deleted {
-                    // A replayed create cannot resurrect a deleted Discord message.
+                    // A replayed create cannot resurrect a deleted chat message.
                     record = old;
                 }
             }

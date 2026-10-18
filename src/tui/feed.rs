@@ -87,7 +87,7 @@ fn layout(app: &App, messages: &[&Message], width: usize, p: Palette, limit: usi
             if previous.is_some() {
                 laid.lines.push(Line::default());
             }
-            let sender = preview(&safe_text(&message.sender), width);
+            let sender = preview(&crate::domain::display_name(&message.sender), width);
             let source = format!("  {}", source_label(app, message));
             laid.lines.push(Line::from(vec![
                 Span::styled(

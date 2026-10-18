@@ -148,23 +148,26 @@ pub trait Transport: Send {
 pub struct Network {
     pub graph: graph::Graph,
     pub discord: discord::Discord,
+    pub icloud: icloud::Connection,
 }
 impl Network {
     pub fn new() -> Result<Self> {
         Ok(Self {
             graph: graph::Graph::new()?,
             discord: discord::Discord::new()?,
+            icloud: icloud::Connection::default(),
         })
     }
 }
 impl Transport for Network {
     fn sync(&mut self, account: &AccountConfig, cursor: Value) -> Result<Batch> {
         match account.provider {
-            Provider::ICloud => icloud::sync(
-                account,
-                &SecretService.load(&account.credential_ref())?,
-                cursor,
-            ),
+            Provider::ICloud => {
+                let password = SecretService.load(&account.credential_ref())?;
+                self.icloud.with(account, &password, |session| {
+                    icloud::sync_session(account, session, cursor.clone())
+                })
+            }
             Provider::Office365 | Provider::Teams => self.graph.sync(account, cursor),
             Provider::Discord => self.discord.sync(account, cursor),
         }
@@ -176,12 +179,12 @@ impl Transport for Network {
         unread: bool,
     ) -> Result<()> {
         match account.provider {
-            Provider::ICloud => icloud::unread(
-                account,
-                &SecretService.load(&account.credential_ref())?,
-                remote,
-                unread,
-            ),
+            Provider::ICloud => {
+                let password = SecretService.load(&account.credential_ref())?;
+                self.icloud.with(account, &password, |session| {
+                    icloud::unread(session, account, remote, unread)
+                })
+            }
             Provider::Office365 => self.graph.unread(account, remote, unread),
             _ => bail!("Remote read state is unsupported for this provider"),
         }
@@ -216,7 +219,7 @@ impl Transport for Network {
         }
         match account.provider {
             Provider::ICloud => match SecretService.load(&account.credential_ref()) {
-                Ok(secret) => icloud::send(account, &secret, item, submission),
+                Ok(secret) => icloud::send(&mut self.icloud, account, &secret, item, submission),
                 Err(_) => SendResult::Failed("Credential missing or keyring locked".into()),
             },
             Provider::Office365 | Provider::Teams => self.graph.send(account, item, submission),

@@ -234,11 +234,94 @@ pub struct Attachment {
     pub mime: String,
 }
 
-/// Strip ANSI/OSC sequences and control characters before any terminal rendering.
+/// Strip ANSI/OSC sequences, control characters and invisible formatting characters before any
+/// terminal rendering.
 pub fn safe_text(text: &str) -> String {
     strip_ansi_escapes::strip_str(text.replace("\r\n", "\n"))
         .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .map(|c| match c {
+            '\u{2028}' | '\u{2029}' => '\n',
+            c => c,
+        })
+        .filter(|c| (!c.is_control() || *c == '\n' || *c == '\t') && !invisible(*c))
         .collect::<String>()
         .replace('\t', "    ")
+}
+
+/// Formatting characters that draw nothing but that terminals and the layout's width tables can
+/// disagree about (soft hyphens, zero-width spaces, fillers, bidi overrides). Mail preheaders
+/// are full of them; one disagreement shifts the rest of the row and leaves stale cells behind.
+/// The emoji joiner and emoji/text presentation selectors stay.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{17B4}'
+            | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'
+            | '\u{200C}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0D}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
+}
+
+/// The name part of "Name <address>" (or the address alone), for headings and notices.
+pub fn display_name(sender: &str) -> String {
+    let sender = safe_text(sender);
+    let trimmed = sender.trim();
+    let Some((name, address)) = trimmed
+        .strip_suffix('>')
+        .and_then(|rest| rest.rsplit_once('<'))
+    else {
+        return trimmed.to_owned();
+    };
+    let name = name.trim().trim_matches('"').trim();
+    if name.is_empty() {
+        address.trim().to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invisible_formatting_never_reaches_the_terminal_but_emoji_sequences_survive() {
+        let preheader = "Sale\u{00AD}\u{034F}\u{200C}\u{200B} now\u{202E}evil\u{FEFF}\u{2028}next";
+        assert_eq!(safe_text(preheader), "Sale nowevil\nnext");
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{2764}\u{FE0F}";
+        assert_eq!(safe_text(family), family);
+        assert_eq!(safe_text("\u{1b}[31mred\u{7}"), "red");
+    }
+
+    #[test]
+    fn senders_are_shown_by_name_with_the_address_as_fallback() {
+        assert_eq!(display_name("Apple <noreply@email.apple.com>"), "Apple");
+        assert_eq!(
+            display_name("\"Hi-Fi, JB\" <deals@example.invalid>"),
+            "Hi-Fi, JB"
+        );
+        assert_eq!(
+            display_name("<only@example.invalid>"),
+            "only@example.invalid"
+        );
+        assert_eq!(display_name("AWildWarrior"), "AWildWarrior");
+        assert_eq!(display_name("a <b> c"), "a <b> c");
+    }
 }

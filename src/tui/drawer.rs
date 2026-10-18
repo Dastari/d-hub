@@ -42,9 +42,18 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         }
         return hit;
     }
-    let composer_height = (area.height / 3).clamp(6, 11);
-    // Tall enough for a short chat burst or an email's sender, date and opening lines.
-    let preview_height = if area.height >= 28 {
+    // The reply box starts at one line and grows with the draft up to six, under a status line
+    // and the recipient, with any attachment chips and the key hints.
+    let attachments = app
+        .session
+        .composer
+        .draft
+        .as_ref()
+        .is_some_and(|d| !d.attachments.is_empty());
+    let draft_lines = app.editor.text.split('\n').count().clamp(1, 6) as u16;
+    let composer_height = 3 + u16::from(attachments) + draft_lines;
+    // A dotted rule, then room for a short chat burst or an email's opening lines.
+    let preview_height = 1 + if area.height >= 28 {
         (area.height / 5).clamp(5, 9)
     } else {
         3
@@ -94,7 +103,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
     };
     feed::draw(frame, parts[1], p, app, &mut hit);
 
-    preview::draw(frame, padded(parts[2]), p, app);
+    app.preview_bounds = preview::draw(frame, parts[2], p, app);
 
     frame.render_widget(
         Block::default().style(Style::default().bg(p.surface)),
@@ -186,7 +195,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         text(recipient, p.fg),
         Rect::new(composer.x, composer.y + 1, composer.width, 1),
     );
-    let mut edit_top = composer.y + 3;
+    let mut edit_top = composer.y + 2;
     if let Some(draft) = &app.session.composer.draft
         && !draft.attachments.is_empty()
     {
@@ -252,19 +261,30 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         Mode::Search => "SEARCH",
         _ => "VIEW",
     };
-    frame.render_widget(
-        text(
-            if app.live_feed {
-                format!("{mode}  ·  v open Discord  ·  ^E dismiss  ·  ? help")
-            } else if app.live_service {
-                format!("{mode} · F5 SEND · ^E dismiss · ↑↓ reply · ←→ source · ? help")
-            } else if app.settings.reply_first {
-                format!("{mode} · F5 mock send · ^E dismiss · ↑↓ reply · ←→ source")
+    // Most useful first; hints that do not fit are dropped from the middle, keeping "? help".
+    let mut hints: Vec<&str> = if app.live_feed {
+        vec!["v open Discord", "Del/^E dismiss", "? help"]
+    } else {
+        vec![
+            if app.live_service {
+                "F5 SEND"
             } else {
-                format!("{mode}  ·  F5 mock send  ·  Esc browse  ·  ? help")
+                "F5 mock send"
             },
-            p.muted,
-        ),
+            "Del dismiss",
+            "↑↓ reply",
+            "PgUp/Dn preview",
+            "? help",
+        ]
+    };
+    let footer = |hints: &[&str]| format!("{mode} · {}", hints.join(" · "));
+    while hints.len() > 2
+        && unicode_width::UnicodeWidthStr::width(footer(&hints).as_str()) > composer.width as usize
+    {
+        hints.remove(hints.len() - 2);
+    }
+    frame.render_widget(
+        text(footer(&hints), p.muted),
         Rect::new(composer.x, composer.bottom() - 1, composer.width, 1),
     );
     let outcome = match app.next_outcome {
@@ -375,7 +395,7 @@ fn reply_context(app: &App, target: &crate::domain::ReplyTarget) -> String {
         .messages
         .iter()
         .find(|m| m.id == target.incoming)
-        .map(|m| safe_text(&m.sender))
+        .map(|m| crate::domain::display_name(&m.sender))
         .filter(|s| !s.trim().is_empty());
     let addresses: Vec<_> = target
         .recipients
@@ -527,5 +547,73 @@ mod tests {
         );
         let frame = snapshot(&mut app, 40, 40).unwrap();
         assert!(!frame.contains("331305346087780362"));
+    }
+
+    #[test]
+    fn the_reply_box_starts_at_one_line_and_grows_to_six() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        let rows = |app: &mut App| {
+            let frame = snapshot(app, 100, 40).unwrap();
+            let lines: Vec<_> = frame.lines().map(str::to_owned).collect();
+            let footer = lines.iter().position(|l| l.contains("mock send")).unwrap();
+            let typed = lines
+                .iter()
+                .position(|l| l.trim_start().starts_with("line ") || l.contains("Write a reply"));
+            (footer, typed.unwrap(), frame)
+        };
+        let (footer, first, frame) = rows(&mut app);
+        assert_eq!(footer - first, 1, "{frame}");
+        app.mode = Mode::Insert;
+        for n in 1..=3 {
+            if n > 1 {
+                app.editor.insert("\n");
+            }
+            app.editor.insert(&format!("line {n}"));
+        }
+        app.update_body();
+        let (footer, first, frame) = rows(&mut app);
+        assert_eq!(footer - first, 3, "{frame}");
+        for n in 4..=9 {
+            app.editor.insert(&format!("\nline {n}"));
+        }
+        app.update_body();
+        let (footer, first, frame) = rows(&mut app);
+        assert_eq!(footer - first, 6, "capped at six lines: {frame}");
+        assert!(
+            frame.contains("line 9") && !frame.contains("line 3"),
+            "{frame}"
+        );
+    }
+
+    #[test]
+    fn the_feed_and_composer_name_mail_senders_without_repeating_their_address() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        let target = app
+            .session
+            .composer
+            .reply_target()
+            .cloned()
+            .expect("target");
+        let incoming = app
+            .session
+            .messages
+            .iter_mut()
+            .find(|m| m.id == target.incoming)
+            .unwrap();
+        incoming.sender = "Apple <noreply@example.invalid>".into();
+        assert_eq!(
+            reply_context(&app, &{
+                let mut t = target.clone();
+                t.recipients = vec!["noreply@example.invalid".into()];
+                t
+            }),
+            "Apple <noreply@example.invalid>"
+        );
+        let frame = snapshot(&mut app, 100, 40).unwrap();
+        assert!(frame.lines().any(|l| l.starts_with("Apple  ")), "{frame}");
+        assert!(
+            !frame.contains("Apple <noreply@example.invalid> <"),
+            "{frame}"
+        );
     }
 }

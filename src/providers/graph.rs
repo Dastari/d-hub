@@ -362,10 +362,12 @@ impl Graph {
                     .into_iter()
                     .flatten()
                     .map(|f| {
+                        // Custom folders are synced by ID; Graph does not accept display names.
                         format!(
-                            "{} ({} unread)",
+                            "{} ({} unread) · {}",
                             f["displayName"].as_str().unwrap_or("?"),
-                            f["unreadItemCount"].as_u64().unwrap_or(0)
+                            f["unreadItemCount"].as_u64().unwrap_or(0),
+                            f["id"].as_str().unwrap_or("?")
                         )
                     })
                     .collect();
@@ -496,10 +498,22 @@ impl Graph {
         for chat in &account.resources {
             let saved = &cursor[chat];
             let mut high = saved["high"].as_str().unwrap_or("").to_owned();
-            let url = if let Some(next) = saved["next"].as_str() {
-                self.continuation(next)?
-            } else {
-                self.chat_messages_url(chat, &high)
+            let next = saved["next"].as_str();
+            // Messages created before this pass began were already offered; a reaction or
+            // edit changes their lastModifiedDateTime, which must update them in place
+            // rather than import them as new. The first sync offers only the last week.
+            let since = match (next, saved["since"].as_str()) {
+                (Some(_), Some(since)) => since.to_owned(),
+                _ => high.clone(),
+            };
+            let baseline = Some(since.as_str())
+                .filter(|s| !s.is_empty())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|t| t.to_utc())
+                .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(7));
+            let url = match next {
+                Some(next) => self.continuation(next)?,
+                None => self.chat_messages_url(chat, &high),
             };
             let value = self.get(account, url)?;
             for message in value["value"]
@@ -507,10 +521,15 @@ impl Graph {
                 .context("Microsoft chat messages missing")?
             {
                 let modified = message["lastModifiedDateTime"].as_str().unwrap_or("");
-                if modified > high.as_str() {
+                if later(modified, &high) {
                     high = modified.into();
                 }
-                if let Some(item) = chat_item(account, chat, own, message)? {
+                let created = message["createdDateTime"]
+                    .as_str()
+                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+                let existing = created.is_none_or(|t| t.to_utc() <= baseline);
+                if let Some(mut item) = chat_item(account, chat, own, message)? {
+                    item.partial = existing;
                     items.push(item);
                 }
             }
@@ -522,7 +541,7 @@ impl Graph {
             if let Some(next) = next {
                 self.continuation(next)?;
             }
-            cursor[chat] = serde_json::json!({"high":high,"next":next});
+            cursor[chat] = serde_json::json!({"high":high,"next":next,"since":since});
             catching_up |= next.is_some();
         }
         items.sort_by_key(|i| i.timestamp);
@@ -572,11 +591,20 @@ impl Graph {
             RemoteMessage::Graph {
                 account: id,
                 message,
-            } if id == &account.id => (
-                self.url(&["me", "messages", message, "reply"]),
-                serde_json::json!({"message":{"body":{"contentType":"Text","content":submission.draft.body},"toRecipients":submission.draft.target.recipients.iter().map(|r|serde_json::json!({"emailAddress":{"address":r}})).collect::<Vec<_>>()}}),
-                202,
-            ),
+            } if id == &account.id => {
+                if self.token(account).is_err() {
+                    return SendResult::Failed(
+                        "Microsoft authentication unavailable; repeat account auth".into(),
+                    );
+                }
+                return match self.mail_reply(account, message, submission) {
+                    Ok((url, body)) => self.post(account, url, body, 202),
+                    Err(e) => SendResult::Failed(format!(
+                        "Microsoft could not prepare the reply; not sent ({})",
+                        safe_text(&e.to_string())
+                    )),
+                };
+            }
             RemoteMessage::GraphChat {
                 account: id, chat, ..
             } if id == &account.id => (
@@ -592,7 +620,66 @@ impl Graph {
                 "Microsoft authentication unavailable; repeat account auth".into(),
             );
         }
-        match self.request(account, Method::POST, url, Some(body)) {
+        self.post(account, url, Some(body), expected)
+    }
+    /// Outlook's own reply draft: the text goes above the quoted original, as in Outlook,
+    /// and only the draft's recipients are replaced. Returns the draft's send request.
+    /// Nothing is sent here; a failure removes the draft.
+    fn mail_reply(
+        &mut self,
+        account: &AccountConfig,
+        message: &str,
+        submission: &Submission,
+    ) -> Result<(Url, Option<Value>)> {
+        let url = self.url(&["me", "messages", message, "createReply"]);
+        let response = self.request(account, Method::POST, url, Some(serde_json::json!({})))?;
+        let draft = crate::auth::response_json(self.check(response)?)?;
+        let id = draft["id"]
+            .as_str()
+            .context("Microsoft reply draft ID missing")?
+            .to_owned();
+        let prepared = (|| {
+            let original = draft["body"]["content"].as_str().unwrap_or("");
+            let html = draft["body"]["contentType"]
+                .as_str()
+                .is_some_and(|t| t.eq_ignore_ascii_case("html"));
+            let content = if html {
+                quote_above_html(&submission.draft.body, original)
+            } else {
+                format!("{}\r\n\r\n{original}", submission.draft.body)
+            };
+            let body = serde_json::json!({
+                "body": {"contentType": if html { "HTML" } else { "Text" }, "content": content},
+                "toRecipients": submission.draft.target.recipients.iter()
+                    .map(|r| serde_json::json!({"emailAddress":{"address":r}}))
+                    .collect::<Vec<_>>(),
+            });
+            let response = self.request(
+                account,
+                Method::PATCH,
+                self.url(&["me", "messages", &id]),
+                Some(body),
+            )?;
+            self.check(response).map(drop)
+        })();
+        if let Err(e) = prepared {
+            self.discard(account, &id);
+            return Err(e);
+        }
+        Ok((self.url(&["me", "messages", &id, "send"]), None))
+    }
+    fn discard(&mut self, account: &AccountConfig, draft: &str) {
+        let url = self.url(&["me", "messages", draft]);
+        let _ = self.request(account, Method::DELETE, url, None);
+    }
+    fn post(
+        &mut self,
+        account: &AccountConfig,
+        url: Url,
+        body: Option<Value>,
+        expected: u16,
+    ) -> SendResult {
+        match self.request(account, Method::POST, url, body) {
             Ok(response) if response.status().as_u16() == expected => SendResult::Accepted,
             // Never connected (DNS, refused, TLS handshake): nothing reached Microsoft.
             Err(e)
@@ -610,6 +697,34 @@ impl Graph {
             // An interruption or unexpected server response can follow acceptance.
             _ => SendResult::Uncertain,
         }
+    }
+}
+/// Puts the reply first inside the draft's HTML body, before Outlook's quoted original.
+fn quote_above_html(reply: &str, original: &str) -> String {
+    let escaped = reply
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace("\r\n", "\n")
+        .replace('\n', "<br>");
+    let block = format!("<div>{escaped}</div><br>");
+    let lower = original.to_ascii_lowercase();
+    match lower
+        .find("<body")
+        .and_then(|start| lower[start..].find('>').map(|end| start + end + 1))
+    {
+        Some(at) => format!("{}{block}{}", &original[..at], &original[at..]),
+        None => format!("{block}{original}"),
+    }
+}
+/// Compares Graph timestamps as instants; their fractional digits vary, so text order is wrong.
+fn later(candidate: &str, than: &str) -> bool {
+    let parse = |t: &str| chrono::DateTime::parse_from_rfc3339(t).ok();
+    match (parse(candidate), parse(than)) {
+        (Some(a), Some(b)) => a > b,
+        (Some(_), None) => true,
+        _ => false,
     }
 }
 fn email(value: &Value) -> Option<String> {
@@ -682,11 +797,52 @@ pub fn chat_item(
     } else {
         text(value["body"]["content"].as_str().unwrap_or(""))
     };
-    if value["attachments"]
-        .as_array()
-        .is_some_and(|a| !a.is_empty())
-    {
-        body.push_str("\n[Teams files available in original client]");
+    body.truncate(body.trim_end().len());
+    for attachment in value["attachments"].as_array().into_iter().flatten() {
+        let name = safe_text(attachment["name"].as_str().unwrap_or(""));
+        match attachment["contentType"].as_str().unwrap_or("") {
+            // A quoted or forwarded message, not a file; Teams supplies a short preview.
+            kind @ ("messageReference" | "forwardedMessageReference") => {
+                let quoted: Value = attachment["content"]
+                    .as_str()
+                    .and_then(|c| serde_json::from_str(c).ok())
+                    .unwrap_or_default();
+                let sender = quoted["messageSender"]["user"]["displayName"]
+                    .as_str()
+                    .unwrap_or("Teams user");
+                let preview = quoted["messagePreview"].as_str().unwrap_or("");
+                let label = if kind == "messageReference" {
+                    sender.to_owned()
+                } else {
+                    format!("Forwarded from {sender}")
+                };
+                let quote = text(&format!("{label}: {preview}"))
+                    .lines()
+                    .map(|line| format!("> {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                body = if body.trim().is_empty() {
+                    quote
+                } else {
+                    format!("{quote}\n{body}")
+                };
+            }
+            "reference" => body.push_str(&format!(
+                "\n[File: {} · open in Teams to download]",
+                if name.is_empty() {
+                    "unnamed file"
+                } else {
+                    &name
+                }
+            )),
+            kind if kind.starts_with("application/vnd.microsoft.card.") => {
+                body.push_str("\n[Card · open in Teams to view]")
+            }
+            kind if kind.starts_with("image/") => {
+                body.push_str("\n[Image · open in Teams to view]")
+            }
+            _ => body.push_str("\n[Attachment · open in Teams to view]"),
+        }
     }
     Ok(Some(Item {
         account_scope: scope(account),
@@ -768,7 +924,7 @@ mod tests {
                 reader.read_exact(&mut body).unwrap();
                 headers.push_str(&String::from_utf8(body).unwrap());
                 observed.lock().unwrap().push(headers);
-                let body = if status == 202 {
+                let body = if matches!(status, 202 | 204) {
                     String::new()
                 } else {
                     value
@@ -810,6 +966,12 @@ mod tests {
         assert!(!item.body.contains("<p>"));
         assert!(!item.body.contains("bad()"));
         let (base, requests, server) = server(vec![
+            (
+                201,
+                serde_json::json!({"id":"draft/1","body":{"contentType":"text","content":"From: Fiction\r\n\r\nCafé hello"}}),
+                None,
+            ),
+            (200, serde_json::json!({"id":"draft/1"}), None),
             (202, Value::Null, None),
             (200, serde_json::json!({"isRead":true}), None),
         ]);
@@ -827,16 +989,81 @@ mod tests {
         graph.unread(&a, &item.remote, false).unwrap();
         server.join().unwrap();
         let requests = requests.lock().unwrap();
-        assert!(requests[0].starts_with("POST /v1.0/me/messages/immutable%2F+%3F/reply "));
+        // Outlook's reply draft keeps the quoted original under the reply text.
+        assert!(requests[0].starts_with("POST /v1.0/me/messages/immutable%2F+%3F/createReply "));
+        assert!(requests[0].contains("ImmutableId"));
+        assert!(requests[1].starts_with("PATCH /v1.0/me/messages/draft%2F1 "));
         let body: Value =
-            serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
-        assert_eq!(body["message"]["body"]["contentType"], "Text");
+            serde_json::from_str(requests[1].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["body"]["contentType"], "Text");
         assert_eq!(
-            body["message"]["toRecipients"][0]["emailAddress"]["address"],
+            body["body"]["content"],
+            "Reply text 東京\r\n\r\nFrom: Fiction\r\n\r\nCafé hello"
+        );
+        assert_eq!(
+            body["toRecipients"][0]["emailAddress"]["address"],
             "reply@example.invalid"
         );
-        assert!(requests[0].contains("ImmutableId"));
-        assert!(requests[1].contains("\"isRead\":true"));
+        assert_eq!(body["toRecipients"].as_array().unwrap().len(), 1);
+        assert!(requests[2].starts_with("POST /v1.0/me/messages/draft%2F1/send "));
+        assert!(requests[3].contains("\"isRead\":true"));
+    }
+    #[test]
+    fn a_reply_draft_that_cannot_be_prepared_is_removed_and_never_sent() {
+        let a = account(Provider::Office365);
+        let item = mail_item(&a, &serde_json::json!({"id":"original","from":{"emailAddress":{"address":"sender@example.invalid"}},"body":{"content":"body"}})).unwrap().unwrap();
+        let op = Submission {
+            operation: 1,
+            draft: crate::composer::Draft {
+                target: item.message(MessageId(1), &a).target.unwrap(),
+                body: "Fictional reply".into(),
+                attachments: vec![],
+                revision: 1,
+            },
+        };
+        let (base, requests, server) = server(vec![
+            (
+                201,
+                serde_json::json!({"id":"draft","body":{"contentType":"html","content":"<html><body><p>Original</p></body></html>"}}),
+                None,
+            ),
+            (
+                400,
+                serde_json::json!({"error":{"code":"ErrorInvalidRecipients","message":"Fictional refusal"}}),
+                None,
+            ),
+            (204, Value::Null, None),
+        ]);
+        let result = graph(base, &a).send(&a, &item, &op);
+        server.join().unwrap();
+        assert!(
+            matches!(&result, SendResult::Failed(reason) if reason.contains("not sent") && reason.contains("ErrorInvalidRecipients")),
+            "{result:?}"
+        );
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].starts_with("DELETE /v1.0/me/messages/draft "));
+        assert!(requests.iter().all(|r| !r.contains("/send ")));
+        // The original's own refusal stops before any draft exists.
+        let (base, requests, server) = self::server(vec![(403, serde_json::json!({}), None)]);
+        let result = self::graph(base, &a).send(&a, &item, &op);
+        server.join().unwrap();
+        assert!(matches!(result, SendResult::Failed(_)));
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+    #[test]
+    fn html_reply_text_is_escaped_and_placed_above_the_quoted_original() {
+        assert_eq!(
+            quote_above_html(
+                "a <b> & \"c\"\nnext",
+                "<html><BODY class=x><p>Original</p></BODY></html>"
+            ),
+            "<html><BODY class=x><div>a &lt;b&gt; &amp; &quot;c&quot;<br>next</div><br><p>Original</p></BODY></html>"
+        );
+        assert_eq!(
+            quote_above_html("hi", "<p>Original</p>"),
+            "<div>hi</div><br><p>Original</p>"
+        );
     }
     #[test]
     fn opaque_delta_links_are_persisted_and_foreign_origins_are_rejected() {
@@ -891,7 +1118,16 @@ mod tests {
         );
         assert!(graph.token.is_none());
         server.join().unwrap();
-        let (base, _, server) = self::server(vec![(500, serde_json::json!({}), None)]);
+        // A failure while preparing the draft sends nothing; one on the send itself may follow acceptance.
+        let (base, _, server) = self::server(vec![
+            (
+                201,
+                serde_json::json!({"id":"draft","body":{"contentType":"text","content":""}}),
+                None,
+            ),
+            (200, serde_json::json!({}), None),
+            (500, serde_json::json!({}), None),
+        ]);
         let mut graph = self::graph(base, &a);
         let item=mail_item(&a,&serde_json::json!({"id":"id","from":{"emailAddress":{"address":"sender@example.invalid"}},"body":{"content":"body"}})).unwrap().unwrap();
         let op = Submission {
@@ -932,6 +1168,87 @@ mod tests {
         assert_eq!(graph.send(&a, &item, &op), SendResult::Accepted);
         server.join().unwrap();
         assert!(requests.lock().unwrap()[0].starts_with("POST /v1.0/chats/chat%2F+id/messages "));
+    }
+    #[test]
+    fn teams_reactions_and_edits_to_earlier_messages_are_updates_not_arrivals() {
+        let mut a = account(Provider::Teams);
+        a.resources = vec!["chat".into()];
+        let at = |days: i64, minutes: i64| {
+            (chrono::Utc::now() - chrono::Duration::days(days) + chrono::Duration::minutes(minutes))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        };
+        let message = |id: &str, created: &str, modified: &str| serde_json::json!({"id":id,"messageType":"message","from":{"user":{"id":"friend","displayName":"Fictional Friend"}},"body":{"contentType":"text","content":id},"createdDateTime":created,"lastModifiedDateTime":modified});
+        let (recent, old_reacted) = (at(0, -10), at(30, 0));
+        let first_high = at(0, -5);
+        let (base, requests, server) = server(vec![
+            (200, serde_json::json!({"id":"owner"}), None),
+            (
+                200,
+                serde_json::json!({"value":[
+                    message("recent", &recent, &first_high),
+                    message("month-old", &old_reacted, &at(0, -6)),
+                ]}),
+                None,
+            ),
+            (200, serde_json::json!({"id":"owner"}), None),
+            (
+                200,
+                serde_json::json!({"value":[
+                    message("new", &at(0, -1), &at(0, -1)),
+                    message("recent", &recent, &at(0, -2)),
+                ]}),
+                None,
+            ),
+        ]);
+        let mut graph = graph(base, &a);
+        let first = graph.sync(&a, Value::Null).unwrap();
+        let partial = |batch: &Batch, id: &str| {
+            batch
+                .items
+                .iter()
+                .find(|i| matches!(&i.remote, RemoteMessage::GraphChat { message, .. } if message == id))
+                .unwrap()
+                .partial
+        };
+        // The first sync offers the last week; a month-old message someone reacted to is not new.
+        assert!(!partial(&first, "recent"));
+        assert!(partial(&first, "month-old"));
+        assert_eq!(first.cursor["chat"]["high"], first_high);
+        let second = graph.sync(&a, first.cursor).unwrap();
+        server.join().unwrap();
+        assert!(!partial(&second, "new"));
+        assert!(
+            partial(&second, "recent"),
+            "an edit or reaction updates in place"
+        );
+        let requests = requests.lock().unwrap();
+        assert!(
+            requests[3].contains("lastModifiedDateTime+gt+"),
+            "{}",
+            requests[3]
+        );
+    }
+    #[test]
+    fn teams_quotes_files_and_cards_are_described_separately() {
+        let a = account(Provider::Teams);
+        let quote = serde_json::json!({"messageId":"1","messagePreview":"Are we still on for Friday?","messageSender":{"user":{"displayName":"Fictional Boss"}}}).to_string();
+        let value = serde_json::json!({"id":"m","messageType":"message","from":{"user":{"id":"friend","displayName":"Fictional Friend"}},"body":{"contentType":"html","content":"<attachment id=\"1\"></attachment><p>Yes, 3pm</p>"},"createdDateTime":"2026-10-18T10:00:00Z","attachments":[{"id":"1","contentType":"messageReference","content":quote}]});
+        let item = chat_item(&a, "chat", "owner", &value).unwrap().unwrap();
+        assert_eq!(
+            item.body,
+            "> Fictional Boss: Are we still on for Friday?\nYes, 3pm"
+        );
+        assert!(!item.body.contains("file"), "a quoted reply has no files");
+        let mut value = value;
+        value["attachments"] = serde_json::json!([
+            {"id":"f","contentType":"reference","name":"Budget.xlsx","contentUrl":"https://example.invalid/f"},
+            {"id":"c","contentType":"application/vnd.microsoft.card.adaptive","content":"{}"},
+        ]);
+        let item = chat_item(&a, "chat", "owner", &value).unwrap().unwrap();
+        assert_eq!(
+            item.body,
+            "Yes, 3pm\n[File: Budget.xlsx · open in Teams to download]\n[Card · open in Teams to view]"
+        );
     }
     #[test]
     fn delta_pages_resume_the_exact_opaque_cursor_until_checkpoint() {
@@ -1129,7 +1446,7 @@ mod tests {
         assert!(steps.iter().all(|s| s.ok), "{steps:?}");
         assert_eq!(
             steps[1].items,
-            vec!["Inbox (3 unread)", "Archive (0 unread)"]
+            vec!["Inbox (3 unread) · 1", "Archive (0 unread) · 2"]
         );
         assert_eq!(steps[2].detail, "Inbox · 120 messages");
         assert!(steps[3].detail.contains("1 messages"));

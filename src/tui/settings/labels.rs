@@ -183,11 +183,23 @@ pub(super) fn describe(
     match item {
         Item::Field(name) => {
             let row = entries.get(name);
+            // An account's resources are mail folders, Teams chats or Discord channels.
+            let provider = name
+                .strip_prefix("accounts.")
+                .and_then(|rest| rest.strip_suffix(".resources"))
+                .and_then(|id| account(app, id))
+                .map(|a| a.provider);
+            let (label, default) = match provider {
+                Some(Provider::ICloud) => ("Folders".into(), "INBOX"),
+                Some(Provider::Office365) => ("Folders".into(), "inbox"),
+                Some(Provider::Teams) => ("Chats".into(), "Not set"),
+                _ => (field_label(name), "Not set"),
+            };
             plain(
-                field_label(name),
+                label,
                 row.map_or_else(String::new, |r| {
                     if r.value.trim().is_empty() {
-                        "Not set".into()
+                        default.into()
                     } else {
                         r.value.clone()
                     }
@@ -258,7 +270,11 @@ pub(super) fn describe(
             } else {
                 "Test connection"
             },
-            "Read-only; lists Teams chats".into(),
+            match account(app, id).map(|a| a.provider) {
+                Some(Provider::Teams) => "Read-only; lists your recent chats and their IDs",
+                _ => "Read-only; lists your folders and checks the synced ones",
+            }
+            .into(),
             p.accent,
         ),
         Item::Action(Action::Connect(_)) => action(

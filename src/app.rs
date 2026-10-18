@@ -108,6 +108,11 @@ pub struct App {
     pub next_outcome: MockOutcome,
     pub reader: Option<Message>,
     pub reader_scroll: u16,
+    /// PageUp/PageDown offset of the preview pane from its default position, kept only while
+    /// the same message stays selected.
+    pub preview_scroll: (Option<MessageId>, isize),
+    /// Lines per page and the offsets the last drawn preview could reach.
+    pub preview_bounds: (usize, isize, isize),
     pub reader_query: String,
     pub edit_key: Option<String>,
     pub secret_ref: Option<String>,
@@ -194,6 +199,8 @@ impl App {
             next_outcome: MockOutcome::Success,
             reader: None,
             reader_scroll: 0,
+            preview_scroll: (None, 0),
+            preview_bounds: (1, 0, 0),
             reader_query: String::new(),
             edit_key: None,
             secret_ref: None,
@@ -319,6 +326,9 @@ impl App {
             .iter()
             .find(|m| m.id == id)
             .and_then(|m| m.target.clone());
+        if self.selected != Some(id) {
+            self.preview_scroll = (None, 0);
+        }
         self.selected = Some(id);
         if self.session.composer.draft.is_none()
             && let Some(target) = &target
@@ -597,6 +607,46 @@ impl App {
         }
     }
 
+    /// Pages the preview of the selected message; a new selection starts at its default view.
+    pub fn scroll_preview(&mut self, pages: isize) {
+        let (page, low, high) = self.preview_bounds;
+        let offset = self.preview_offset();
+        let offset = offset.saturating_add(pages.saturating_mul(page.max(1) as isize));
+        self.preview_scroll = (self.selected, offset.clamp(low.min(0), high.max(0)));
+    }
+
+    pub fn preview_offset(&self) -> isize {
+        match self.preview_scroll {
+            (Some(id), offset) if Some(id) == self.selected => offset,
+            _ => 0,
+        }
+    }
+
+    /// Delete with no reply started: dismiss the selection and mark it read. Never restores.
+    pub fn dismiss_read(&mut self) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        if self.dismissed(id) {
+            self.notice = "Already dismissed · e restores it.".into();
+            return;
+        }
+        let ids: Vec<_> = self.burst(id).iter().map(|m| m.id).collect();
+        self.toggle_dismissed();
+        if ids.iter().all(|id| self.dismissed(*id)) {
+            let unread: Vec<_> = self
+                .session
+                .messages
+                .iter()
+                .filter(|m| m.unread && ids.contains(&m.id))
+                .map(|m| m.id)
+                .collect();
+            for id in unread {
+                self.set_unread(id, false);
+            }
+        }
+    }
+
     pub fn dismissed(&self, id: MessageId) -> bool {
         self.session
             .message_state
@@ -715,7 +765,7 @@ impl App {
         let burst = self.burst(id);
         let sender = burst
             .first()
-            .map(|m| crate::domain::safe_text(&m.sender))
+            .map(|m| crate::domain::display_name(&m.sender))
             .unwrap_or_default();
         let ids: Vec<_> = burst
             .iter()

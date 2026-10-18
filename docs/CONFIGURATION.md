@@ -22,7 +22,7 @@ The strict TOML schema remains `schema_version = 1`; older flat configs load wit
 | `ai.threshold`, `.timeout_ms`, `.hold_pending` | 0.6, 5000 (100–30000), false |
 | `accounts` | JSON account list, maximum 32, no secrets; `account add PROVIDER [ID] [--name NAME]`, `:account add [PROVIDER [ID]]` or Settings › Accounts › + Add account creates metadata; omitted IDs use the first free `provider`, `provider-2`, … |
 | `accounts.ID.name` | Empty (shows the ID); optional one-line display name up to 80 bytes, shown in the feed, composer and settings. `account rename ID NAME` / `:account rename ID NAME`. Renaming never changes the ID, credentials, drafts, sync cursors, AI decisions or a running connection |
-| `accounts.ID.username`, `.tenant`, `.client_id`, `.resources` | Empty username; Office 365 and Teams start with the built-in work app registration (other providers: organizations, empty app ID); newline-separated resource IDs |
+| `accounts.ID.username`, `.tenant`, `.client_id`, `.resources` | Empty username; Office 365 and Teams start with the built-in work app registration (other providers: organizations, empty app ID); newline-separated resources: mail folders for iCloud/Office 365 (**Folders**, default INBOX/inbox), chat IDs for Teams (**Chats**) |
 | `accounts.ID.enabled`, `.allow_send`, `.poll_seconds` | false, false, 30; opt-in live connections/sends, polling range 15–3600 seconds |
 | `accounts.ID.allow_ai` | false; both this and global AI enablement are required |
 | `accounts.ID.discord_user_id` | Empty until QR setup; verified Discord identity pin, validated as a snowflake |

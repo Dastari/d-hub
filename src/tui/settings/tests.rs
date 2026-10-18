@@ -585,3 +585,42 @@ fn soft_rows_break_at_spaces_and_split_long_words() {
     assert_eq!(rows, ["aaa ", "bbb ccc", "abcdefg", "hij"]);
     assert_eq!(render::soft_rows("", 5), [(0, 0)]);
 }
+
+#[test]
+fn mail_accounts_choose_their_folders_on_the_account_page() {
+    let mut app = settings_app();
+    app.settings
+        .add_account("home-mail", Provider::ICloud)
+        .unwrap();
+    app.settings
+        .add_account("work-mail", Provider::Office365)
+        .unwrap();
+    open(&mut app, SettingsPage::Account("home-mail".into()));
+    let folders = Item::Field("accounts.home-mail.resources".into());
+    select(&mut app, &folders);
+    let screen = super::super::snapshot(&mut app, 110, 34).unwrap();
+    let row = screen.lines().find(|l| l.contains("› Folders")).unwrap();
+    assert!(row.contains("INBOX"), "{row}");
+    assert!(screen.contains("empty syncs INBOX"));
+    assert!(screen.contains("lists your folders"));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::EditSetting);
+    app.command = Editor::new("INBOX\nArchive");
+    super::super::key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        4,
+        &mut None,
+        &mut None,
+        None,
+    );
+    assert_eq!(app.settings.accounts[0].resources, ["INBOX", "Archive"]);
+    open(&mut app, SettingsPage::Account("work-mail".into()));
+    select(
+        &mut app,
+        &Item::Field("accounts.work-mail.resources".into()),
+    );
+    let screen = super::super::snapshot(&mut app, 110, 34).unwrap();
+    let row = screen.lines().find(|l| l.contains("› Folders")).unwrap();
+    assert!(row.contains("inbox"), "{row}");
+}

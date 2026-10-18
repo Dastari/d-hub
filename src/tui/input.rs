@@ -81,6 +81,20 @@ pub(super) fn key(
             app.toggle_dismissed();
             return false;
         }
+        // Delete before a reply is started: dismiss and mark read. With a draft it edits text.
+        if key.code == KeyCode::Delete
+            && key.modifiers.is_empty()
+            && app.editor.text.is_empty()
+            && app.session.composer.draft.is_none()
+        {
+            app.dismiss_read();
+            return false;
+        }
+        // PageUp/PageDown page the preview pane; the composer has no pages of its own.
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) && key.modifiers.is_empty() {
+            app.scroll_preview(if key.code == KeyCode::PageDown { 1 } else { -1 });
+            return false;
+        }
         if control
             && key.code == KeyCode::Char('a')
             && !app.live_feed
@@ -258,8 +272,6 @@ pub(super) fn key(
                 app.new_items = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1, rows),
-            KeyCode::PageDown => app.move_selection(rows as isize, rows),
-            KeyCode::PageUp => app.move_selection(-(rows as isize), rows),
             KeyCode::Char('d') if control => app.move_selection(rows as isize, rows),
             KeyCode::Char('u') if control => app.move_selection(-(rows as isize), rows),
             KeyCode::Home => {
