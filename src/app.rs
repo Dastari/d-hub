@@ -683,11 +683,53 @@ impl App {
     }
 
     pub fn spam_match(&self, message: &Message) -> bool {
-        self.settings.spam.enabled
-            && (policy::matches_terms(message, &self.settings.spam.local_terms)
-                || self
-                    .classification(message)
-                    .is_some_and(|c| c.spam >= self.settings.spam.threshold))
+        self.filtered(message).is_some()
+    }
+
+    /// Why the feed hides a message, if it does. Local rules apply at once; decision answers
+    /// apply when a current result exists. Unclassified messages stay visible (unless
+    /// `ai.hold_pending`), so a failed or slow decision never loses anything.
+    pub fn filtered(&self, message: &Message) -> Option<Filtered> {
+        let spam = &self.settings.spam;
+        if !spam.enabled {
+            return None;
+        }
+        if spam.no_reply && message.no_reply() {
+            return Some(Filtered::NoReply);
+        }
+        if spam.no_reply && message.signals.automated {
+            return Some(Filtered::Automated);
+        }
+        if policy::matches_terms(message, &spam.local_terms) {
+            return Some(Filtered::Terms);
+        }
+        let c = self.classification(message)?;
+        if c.spam >= spam.threshold {
+            return Some(Filtered::Promotion);
+        }
+        let below = |p: Option<f64>| p.is_some_and(|p| p < spam.for_you_threshold);
+        if spam.for_you && below(c.person) {
+            return Some(Filtered::NotPerson);
+        }
+        if spam.for_you && below(c.for_you) {
+            return Some(Filtered::NotForYou);
+        }
+        None
+    }
+
+    /// How many messages the current source and focus hide through filtering.
+    pub fn filtered_count(&self) -> usize {
+        self.session
+            .messages
+            .iter()
+            .filter(|m| {
+                m.incoming
+                    && m.matches_source(self.settings.source)
+                    && self.profile_matches(m)
+                    && !self.dismissed(m.id)
+                    && self.filtered(m).is_some()
+            })
+            .count()
     }
 
     fn profile_matches(&self, message: &Message) -> bool {
@@ -950,6 +992,10 @@ impl App {
         };
         if result.fingerprint != policy::fingerprint(message, &self.settings)
             || !policy::probability(result.spam)
+            || [result.person, result.for_you]
+                .into_iter()
+                .flatten()
+                .any(|p| !policy::probability(p))
             || result.profiles.values().any(|p| !policy::probability(*p))
         {
             return false;
@@ -1141,15 +1187,22 @@ impl App {
             && self.settings.ai.enabled
             && self.decision_job.is_none()
         {
-            let job = self
+            // Newest first; messages the local rules already hide are not worth a request.
+            let mut candidates: Vec<_> = self
                 .session
                 .messages
                 .iter()
-                .filter(|m| !self.dismissed(m.id) && self.classification(m).is_none())
-                .find_map(|m| {
-                    let job = crate::decisions::DecisionJob::build(m, &self.settings).ok()?;
-                    (!self.decision_attempted.contains(&job.fingerprint)).then_some(job)
-                });
+                .filter(|m| {
+                    !self.dismissed(m.id)
+                        && self.classification(m).is_none()
+                        && self.filtered(m).is_none()
+                })
+                .collect();
+            candidates.sort_by_key(|m| std::cmp::Reverse((m.timestamp, m.id)));
+            let job = candidates.into_iter().find_map(|m| {
+                let job = crate::decisions::DecisionJob::build(m, &self.settings).ok()?;
+                (!self.decision_attempted.contains(&job.fingerprint)).then_some(job)
+            });
             if let Some(job) = job {
                 let (tx, rx) = std::sync::mpsc::sync_channel(1);
                 self.decision_attempted.insert(job.fingerprint.clone());
@@ -1163,5 +1216,29 @@ impl App {
             }
         }
         changed
+    }
+}
+
+/// Why a message is hidden from the feed (shown again with S / `show_spam`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filtered {
+    NoReply,
+    Automated,
+    Terms,
+    Promotion,
+    NotPerson,
+    NotForYou,
+}
+
+impl Filtered {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NoReply => "no-reply",
+            Self::Automated => "automated",
+            Self::Terms => "excluded term",
+            Self::Promotion => "promotional",
+            Self::NotPerson => "not from a person",
+            Self::NotForYou => "not for you",
+        }
     }
 }

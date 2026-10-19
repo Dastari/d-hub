@@ -46,6 +46,7 @@ pub fn into_message(
     }
     Some(Message {
         account_scope: None,
+        signals: Default::default(),
         id,
         timestamp,
         time: format!(

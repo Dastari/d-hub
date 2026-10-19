@@ -95,6 +95,7 @@ fn account(id: &str) -> AccountConfig {
 fn item(account: &AccountConfig, uid: u32) -> Item {
     Item {
         account_scope: providers::scope(account),
+        signals: Default::default(),
         remote: RemoteMessage::Imap {
             account: account.id.clone(),
             mailbox: "INBOX".into(),
@@ -524,6 +525,7 @@ fn discord_arrivals_edits_duplicates_deletions_and_replies_preserve_draft_and_ar
         .with_transport(fake);
     let make = |id: &str, body: &str| Item {
         account_scope: providers::scope(&a),
+        signals: Default::default(),
         remote: RemoteMessage::DiscordDm {
             account: a.id.clone(),
             channel: "100000000000000003".into(),
@@ -748,6 +750,7 @@ fn teams_edits_and_reactions_update_in_place_and_never_resurface_old_messages() 
         .with_transport(fake);
     let make = |id: &str, body: &str, timestamp: u64, partial: bool| Item {
         account_scope: providers::scope(&a),
+        signals: Default::default(),
         remote: RemoteMessage::GraphChat {
             account: a.id.clone(),
             chat: "chat".into(),

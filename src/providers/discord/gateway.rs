@@ -367,7 +367,7 @@ fn message_fields(value: &Value) -> Value {
         .take(10)
         .map(|v| json!({"filename":text(v["filename"].as_str().unwrap_or("file"))}))
         .collect();
-    json!({"id":value["id"],"channel_id":value["channel_id"],"author":{"id":author["id"],"username":text(author["username"].as_str().unwrap_or_default()),"global_name":text(author["global_name"].as_str().unwrap_or_default())},"type":value["type"],"content":text(value["content"].as_str().unwrap_or_default()),"attachments":attachments})
+    json!({"id":value["id"],"channel_id":value["channel_id"],"author":{"id":author["id"],"username":text(author["username"].as_str().unwrap_or_default()),"global_name":text(author["global_name"].as_str().unwrap_or_default()),"bot":author["bot"].as_bool().unwrap_or(false)},"type":value["type"],"content":text(value["content"].as_str().unwrap_or_default()),"attachments":attachments})
 }
 
 #[cfg(test)]
@@ -434,6 +434,15 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[test]
+    fn message_fields_keep_the_bot_flag_and_drop_everything_else_about_the_author() {
+        let fields = message_fields(&json!({"id":"1","channel_id":"2","type":0,"content":"hi",
+            "author":{"id":"3","username":"helper","bot":true,"email":"x@example.invalid"}}));
+        assert_eq!(fields["author"]["bot"], true);
+        assert!(fields["author"].get("email").is_none());
+        let person = message_fields(&json!({"author":{"id":"3","username":"son"}}));
+        assert_eq!(person["author"]["bot"], false);
     }
     #[test]
     fn wrong_gateway_identity_is_fatal_without_forwarding_data_or_credentials() {

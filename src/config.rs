@@ -168,7 +168,7 @@ pub const REGISTRY: &[Setting] = &[
     Setting {
         key: Key::ShowSpam,
         name: "show_spam",
-        help: "Include spam/promotion matches (S)",
+        help: "Include filtered messages: no-reply, automated, promotional, not for you (S)",
         choices: &["false", "true"],
     },
     Setting {
@@ -355,6 +355,23 @@ impl Settings {
                 "spam.local_terms",
                 self.spam.local_terms.join("\n"),
                 "Optional local exclusion terms, one per line; no AI needed",
+            ),
+            SettingRow::choice(
+                "spam.no_reply",
+                self.spam.no_reply.to_string(),
+                "Hide no-reply mail and automated senders (bots, apps, Auto-Submitted); no AI needed",
+                &["true", "false"],
+            ),
+            SettingRow::choice(
+                "spam.for_you",
+                self.spam.for_you.to_string(),
+                "With AI decisions: hide what a person did not write to you or a group you are in",
+                &["true", "false"],
+            ),
+            SettingRow::text(
+                "spam.for_you_threshold",
+                self.spam.for_you_threshold.to_string(),
+                "Hide when the written-by-a-person or meant-for-you probability is below this (0–1)",
             ),
             SettingRow::text(
                 "accounts",
@@ -549,6 +566,9 @@ impl Settings {
             "spam.prompt" => self.spam.prompt = value.into(),
             "spam.threshold" => self.spam.threshold = value.parse()?,
             "spam.local_terms" => self.spam.local_terms = terms(),
+            "spam.no_reply" => self.spam.no_reply = value.parse()?,
+            "spam.for_you" => self.spam.for_you = value.parse()?,
+            "spam.for_you_threshold" => self.spam.for_you_threshold = value.parse()?,
             _ => {
                 let parts: Vec<_> = name.split('.').collect();
                 match parts.as_slice() {

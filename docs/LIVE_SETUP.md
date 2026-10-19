@@ -131,7 +131,7 @@ Changing account identity/resources does not authorize old drafts or queued read
 
 ## AI and current limits
 
-Jev/OpenAI decision filtering runs once in the daemon. Store the key through `ai-auth --socket PATH` or `:auth ai`, configure provider/model/prompts, then enable both `ai.enabled` and `accounts.ID.allow_ai`. Bounded text only; attachments are excluded. Spam and focus prompts remain independent. AI failures leave local rules available and cannot modify or send drafts.
+Jev/OpenAI decision filtering runs once in the daemon. Store the key through `ai-auth --socket PATH` or `:auth ai`, configure provider/model/prompts, then enable both `ai.enabled` and `accounts.ID.allow_ai`. Bounded text only; attachments are excluded. Spam and focus prompts remain independent. With `spam.for_you` on, each request also asks whether a person wrote the message and whether it is meant for the owner or a group they are in (see [Integrations](INTEGRATIONS.md#typed-decisions-and-summaries)). No-reply and automated mail is hidden locally without any request. AI failures leave local rules available and cannot modify or send drafts.
 
 The active feed is a recent 200-item window. Pinned targets, selected items, saved drafts and pending read updates are protected from eviction. Normalized remote records and local dismissal state remain in the private database; a full archive browser/retention UI is pending. Cached body previews are limited to 16,000 bytes; oversized IMAP messages fetch headers only beyond one MiB. The original client is needed for complete oversized content and files.
 

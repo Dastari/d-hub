@@ -31,6 +31,8 @@ pub struct Item {
     pub deleted: bool,
     #[serde(default)]
     pub partial: bool,
+    #[serde(default)]
+    pub signals: crate::domain::Signals,
 }
 impl Item {
     pub fn message(&self, id: MessageId, account: &AccountConfig) -> Message {
@@ -74,6 +76,7 @@ impl Item {
             },
             provider: Some(account.provider),
             account: Some(account.id.clone()),
+            signals: self.signals.clone(),
         }
     }
 }

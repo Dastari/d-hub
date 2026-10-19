@@ -559,8 +559,12 @@ impl Owner {
                     .session
                     .message_state
                     .insert(id, self.database.local_state(id)?);
-                staged.session.messages.push(item.message(id, account));
-                staged.new_items += 1;
+                let message = item.message(id, account);
+                // Filtered arrivals (no-reply, automated) are stored but not announced as new.
+                if staged.filtered(&message).is_none() {
+                    staged.new_items += 1;
+                }
+                staged.session.messages.push(message);
             }
         }
         staged

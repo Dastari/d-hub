@@ -204,6 +204,9 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
         .collect(),
         SettingsPage::Section(SettingsSection::Spam) => [
             "spam.enabled",
+            "spam.no_reply",
+            "spam.for_you",
+            "spam.for_you_threshold",
             "spam.prompt",
             "spam.threshold",
             "spam.local_terms",

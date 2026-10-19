@@ -305,6 +305,12 @@ pub(super) fn key(
             KeyCode::Char('S') => {
                 app.settings.show_spam = !app.settings.show_spam;
                 app.refresh_filters();
+                app.notice = if app.settings.show_spam {
+                    "Filtered messages shown and labelled · S hides them again."
+                } else {
+                    "Filtered messages hidden · S shows them."
+                }
+                .into();
             }
             KeyCode::Char('u') => {
                 if let Some(message) = app.selected_message() {

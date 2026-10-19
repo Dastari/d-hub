@@ -107,8 +107,8 @@ fn layout(app: &App, messages: &[&Message], width: usize, p: Palette, limit: usi
         if app.dismissed(message.id) {
             meta.push_str(" · dismissed");
         }
-        if app.spam_match(message) {
-            meta.push_str(" · filtered");
+        if let Some(reason) = app.filtered(message) {
+            meta.push_str(&format!(" · {}", reason.label()));
         }
         let rest = width.saturating_sub(INDENT).max(1);
         let mut first = rest.saturating_sub(meta.width() + 2);

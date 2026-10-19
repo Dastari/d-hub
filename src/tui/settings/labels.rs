@@ -19,16 +19,19 @@ pub(super) fn field_label(name: &str) -> String {
         ("mark_read_on_select", _) => "Mark read on select",
         ("dismiss_after_reply", _) => "Dismiss after reply",
         ("show_dismissed", _) => "Show dismissed",
-        ("show_spam", _) => "Show spam matches",
+        ("show_spam", _) => "Show filtered messages",
         ("ai.enabled", _) => "AI decisions",
         ("ai.provider", _) => "Provider",
         ("ai.model", _) => "Model",
         ("ai.threshold", _) => "Match threshold",
         ("ai.timeout_ms", _) => "Timeout (ms)",
         ("ai.hold_pending", _) => "Hold while pending",
-        ("spam.enabled", _) => "Spam filter",
-        ("spam.prompt", _) => "Decision prompt",
-        ("spam.threshold", _) => "Spam threshold",
+        ("spam.enabled", _) => "Filtering",
+        ("spam.no_reply", _) => "Hide no-reply and automated",
+        ("spam.for_you", _) => "Only what is for you (AI)",
+        ("spam.for_you_threshold", _) => "For-you threshold",
+        ("spam.prompt", _) => "Promotion question",
+        ("spam.threshold", _) => "Promotion threshold",
         ("spam.local_terms", _) => "Local exclusion terms",
         (_, "name") => {
             if name.starts_with("accounts.") {
@@ -105,7 +108,16 @@ pub(super) fn section_summary(app: &App, section: SettingsSection) -> String {
                 "off".into()
             }
         }
-        SettingsSection::Spam => format!("{} · {}", on_off(s.spam.enabled), s.spam.threshold),
+        SettingsSection::Spam if !s.spam.enabled => "off".into(),
+        SettingsSection::Spam => [
+            s.spam.no_reply.then_some("no-reply"),
+            Some("promotions"),
+            (s.spam.for_you && s.ai.enabled).then_some("not for you"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", "),
     }
 }
 
@@ -116,7 +128,7 @@ pub(super) fn section_note(section: SettingsSection) -> &'static str {
         SettingsSection::Feed => "Reply-first navigation, filters and read behaviour",
         SettingsSection::Profiles => "Work, Home and custom focus prompts",
         SettingsSection::Ai => "Optional external decisions; per-account opt-in",
-        SettingsSection::Spam => "Global promotion/spam exclusion",
+        SettingsSection::Spam => "What is hidden: no-reply, automated, promotional, not for you",
     }
 }
 

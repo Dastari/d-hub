@@ -527,7 +527,7 @@ fn prompts_wrap_in_place_and_commands_open_their_row() {
         Item::Field("spam.prompt".into())
     );
     let screen = super::super::snapshot(&mut app, 110, 34).unwrap();
-    assert!(screen.contains("Settings › Spam filtering"));
+    assert!(screen.contains("Settings › Filtering"));
     assert!(screen.contains("Ctrl+S saves · Enter adds a line · Esc cancels"));
     // The default prompt wraps at words across rows instead of scrolling sideways.
     let prompt_rows = screen

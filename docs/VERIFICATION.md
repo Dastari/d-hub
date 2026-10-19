@@ -260,3 +260,23 @@ All 188 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts 
 ## v0.4.4 publication
 
 [v0.4.4](https://github.com/dastari/d-hub/releases/tag/v0.4.4) is published (Delete with emptied drafts, borderless HTML, tighter previews). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39178725957) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39178725937) passed. Locally, all 188 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.4, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Filtering to what needs the owner: no-reply rules and Jev for-you questions
+
+Owner direction: the drawer exists to reply to what needs the owner, so it should hide no-reply mail and, through Jev/decisions, anything not written to the owner or a group they are in (informational is fine; promotional is not). Implemented against the [TypeSafe API reference](https://docs.typesafe.ai/api.md), State and Noul guides and Jev 1.13 limitations, read 19 October 2026: POST `/v1/systemone`, `state` as an object, Noul questions with optional `criteria.true/false`, answers in [0,1].
+- **Local rules** (`spam.no_reply`, default on): mail From a no-reply address, or replying only to one, is hidden immediately. So is anything the provider marks automated (Auto-Submitted, Teams application senders, Discord bots). A test covers the recognised forms, including Apple's From-noreply-with-Reply-To pattern, and people such as `noreen@` and `reply+…@reply.github.com` who must not match.
+- **Decisions** (`spam.for_you`, default on; needs `ai.enabled`, the account's `allow_ai` and a stored key): two Noul questions with criteria, plus the existing promotion question. Fake answers verify:
+  - hide when a person did not write it, when it is not for the owner, and for promotions;
+  - show for uncertain answers;
+  - a pending decision hides nothing;
+  - turning the option off stops asking;
+  - out-of-range answers are rejected.
+- **Request contract:** the Jev state is an object with the owner address, addressing, recipient count and bulk/automated flags, and a body bounded to 4,000 characters. OpenAI keeps a string input with criteria inline. Mail the local rules already hide is never sent for classification. Pending classifications run newest first.
+- **Provider signals:** fake MIME, Graph and gateway payloads cover:
+  - iCloud To/Cc, including me.com and icloud.com as one mailbox, List-Unsubscribe/Precedence and Auto-Submitted;
+  - Outlook To/Cc, the "Other" inbox and old cursors without recipient fields;
+  - Teams one-to-one, group and application senders;
+  - Discord direct messages and the bot flag, which the gateway sanitiser keeps while still dropping other author fields.
+- **Feed:** the header shows "N hidden". S shows filtered messages labelled with their reason. Hidden messages never become the automatic reply target and are not counted as new arrivals. The Settings › Filtering page and `config` share the new `spam.no_reply`, `spam.for_you` and `spam.for_you_threshold` fields.
+
+All 195 Rust tests, formatting and warnings-denied Clippy pass. No TypeSafe request was made: no key was available and real messages may not be sent in tests. Answer quality and thresholds on the owner's real mail are unmeasured; tune `spam.for_you_threshold` against real examples.

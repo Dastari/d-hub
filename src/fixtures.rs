@@ -15,6 +15,7 @@ pub fn messages() -> Vec<Message> {
             unread: true, incoming: true,
             remote: None,
             provider: Some(provider), account: Some(account.into()),
+            signals: Default::default(),
             target: Some(ReplyTarget {
                 provider, account: account.into(), conversation: format!("fixture-thread-{id}"),
                 incoming: MessageId(id), recipients: vec![format!("{}@example.invalid", sender.to_lowercase())],

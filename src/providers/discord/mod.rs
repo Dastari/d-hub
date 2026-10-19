@@ -273,6 +273,7 @@ impl Discord {
         if event.kind == "MESSAGE_DELETE" {
             return Ok(Some(Item {
                 account_scope: scope(account),
+                signals: Default::default(),
                 remote,
                 sender: String::new(),
                 recipients: vec![],
@@ -335,8 +336,19 @@ impl Discord {
         if body.is_empty() {
             body = "[Discord message has no text; rich content available in Discord]".into();
         }
+        let signals = crate::domain::Signals {
+            automated: value["author"]["bot"] == true,
+            bulk: false,
+            addressed: if channel.kind == 3 {
+                crate::domain::Addressed::Group
+            } else {
+                crate::domain::Addressed::Direct
+            },
+            audience: Some(channel.recipients.len() as u32 + 1),
+        };
         Ok(Some(Item {
             account_scope: scope(account),
+            signals,
             remote,
             sender: safe_text(sender),
             recipients: channel.recipients,
@@ -723,6 +735,8 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].remote, items[1].remote);
         assert_eq!(items[0].body, "Hello 東京");
+        assert_eq!(items[0].signals.addressed, crate::domain::Addressed::Direct);
+        assert!(!items[0].signals.automated);
         let message = items[0].message(MessageId(42), &a);
         assert!(
             message.remote.is_none(),
@@ -764,6 +778,7 @@ mod tests {
         let a = account();
         let item = Item {
             account_scope: scope(&a),
+            signals: Default::default(),
             remote: RemoteMessage::DiscordDm {
                 account: a.id.clone(),
                 channel: CHANNEL.into(),

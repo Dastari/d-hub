@@ -91,8 +91,20 @@ pub fn parse(
             safe_text(&name)
         ));
     }
+    let (to, cc) = (addresses(&header("To")), addresses(&header("Cc")));
+    let precedence = header("Precedence").to_lowercase();
+    let auto = header("Auto-Submitted").to_lowercase();
+    let signals = crate::domain::Signals {
+        automated: !auto.trim().is_empty() && auto.trim() != "no",
+        bulk: !header("List-Id").is_empty()
+            || !header("List-Unsubscribe").is_empty()
+            || ["bulk", "list", "junk"].contains(&precedence.trim()),
+        addressed: crate::domain::addressed(&account.username, &to, &cc),
+        audience: Some((to.len() + cc.len()) as u32),
+    };
     Ok(Item {
         account_scope: scope(account),
+        signals,
         remote: RemoteMessage::Imap {
             account: account.id.clone(),
             mailbox: mailbox.into(),
@@ -313,6 +325,7 @@ pub fn sync_session<T: std::io::Read + std::io::Write>(
             if let Some(uid) = meta.uid {
                 items.push(Item {
                     account_scope: scope(account),
+                    signals: Default::default(),
                     remote: RemoteMessage::Imap {
                         account: account.id.clone(),
                         mailbox: folder.clone(),
@@ -384,6 +397,7 @@ pub fn sync_session<T: std::io::Read + std::io::Write>(
                 for uid in ids.into_iter().filter(|uid| !remaining.contains(uid)) {
                     items.push(Item {
                         account_scope: scope(account),
+                        signals: Default::default(),
                         remote: RemoteMessage::Imap {
                             account: account.id.clone(),
                             mailbox: folder.clone(),
@@ -559,6 +573,53 @@ mod tests {
         let mut a = AccountConfig::new("mail-test", Provider::ICloud);
         a.username = "owner@example.invalid".into();
         a
+    }
+    #[test]
+    fn mail_headers_record_addressing_lists_and_automation_for_filtering() {
+        use crate::domain::Addressed;
+        let parse_with = |headers: &str, owner: &str| {
+            let mut a = account();
+            a.username = owner.into();
+            let raw =
+                format!("From: Shop <shop@example.invalid>\r\n{headers}Subject: Hi\r\n\r\nBody");
+            parse(&a, "INBOX", 1, 1, true, raw.as_bytes())
+                .unwrap()
+                .signals
+        };
+        let direct = parse_with(
+            "To: Owner <owner@example.invalid>, b@example.invalid\r\nCc: c@example.invalid\r\n",
+            "owner@example.invalid",
+        );
+        assert_eq!(
+            (
+                direct.addressed,
+                direct.audience,
+                direct.bulk,
+                direct.automated
+            ),
+            (Addressed::To, Some(3), false, false)
+        );
+        // Apple's me.com and icloud.com names reach one mailbox.
+        let cc = parse_with(
+            "To: a@example.invalid\r\nCc: owner@me.com\r\n",
+            "owner@icloud.com",
+        );
+        assert_eq!(cc.addressed, Addressed::Cc);
+        let list = parse_with(
+            "To: deals@example.invalid\r\nList-Unsubscribe: <https://example.invalid/u>\r\nPrecedence: bulk\r\n",
+            "owner@example.invalid",
+        );
+        assert_eq!((list.addressed, list.bulk), (Addressed::NotListed, true));
+        let auto = parse_with(
+            "To: owner@example.invalid\r\nAuto-Submitted: auto-generated\r\n",
+            "owner@example.invalid",
+        );
+        assert!(auto.automated);
+        let human = parse_with(
+            "To: owner@example.invalid\r\nAuto-Submitted: no\r\n",
+            "owner@example.invalid",
+        );
+        assert!(!human.automated);
     }
     #[test]
     fn mime_decodes_alternatives_reply_to_unicode_and_removes_terminal_sequences() {

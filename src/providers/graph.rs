@@ -313,7 +313,7 @@ impl Graph {
         url.query_pairs_mut()
             .append_pair(
                 "$select",
-                "id,from,replyTo,subject,body,receivedDateTime,isRead,internetMessageId,hasAttachments",
+                "id,from,replyTo,toRecipients,ccRecipients,subject,body,receivedDateTime,isRead,internetMessageId,hasAttachments,inferenceClassification",
             )
             .append_pair("$filter", &format!("receivedDateTime ge {since}"));
         url
@@ -753,8 +753,30 @@ pub fn mail_item(account: &AccountConfig, value: &Value) -> Result<Option<Item>>
     if value["hasAttachments"] == true {
         body.push_str("\n[Attachments available in original mail client]");
     }
+    let listed = |field: &str| -> Vec<String> {
+        value[field]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(email)
+            .collect()
+    };
+    let (to, cc) = (listed("toRecipients"), listed("ccRecipients"));
+    let signals = crate::domain::Signals {
+        automated: false,
+        bulk: value["inferenceClassification"].as_str() == Some("other"),
+        addressed: if value.get("toRecipients").is_none() {
+            crate::domain::Addressed::Unknown
+        } else {
+            crate::domain::addressed(&account.username, &to, &cc)
+        },
+        audience: value
+            .get("toRecipients")
+            .map(|_| (to.len() + cc.len()) as u32),
+    };
     Ok(Some(Item {
         account_scope: scope(account),
+        signals,
         remote: RemoteMessage::Graph {
             account: account.id.clone(),
             message: id.into(),
@@ -844,8 +866,23 @@ pub fn chat_item(
             _ => body.push_str("\n[Attachment · open in Teams to view]"),
         }
     }
+    // One-to-one chat IDs end in @unq.gbl.spaces and group/meeting chats in @thread.v2; the
+    // configured chat ID is all a message carries, so this is evidence, not a guarantee.
+    let signals = crate::domain::Signals {
+        automated: user.is_empty() && value["from"]["application"].is_object(),
+        bulk: false,
+        addressed: if chat.ends_with("@unq.gbl.spaces") {
+            crate::domain::Addressed::Direct
+        } else if chat.contains("@thread.") {
+            crate::domain::Addressed::Group
+        } else {
+            crate::domain::Addressed::Unknown
+        },
+        audience: None,
+    };
     Ok(Some(Item {
         account_scope: scope(account),
+        signals,
         remote: RemoteMessage::GraphChat {
             account: account.id.clone(),
             chat: chat.into(),
@@ -955,6 +992,51 @@ mod tests {
             base,
             granted: None,
         }
+    }
+    #[test]
+    fn mail_and_chat_items_record_addressing_focused_inbox_and_app_senders() {
+        use crate::domain::Addressed;
+        let a = account(Provider::Office365);
+        let mail = serde_json::json!({"id":"m","from":{"emailAddress":{"address":"news@example.invalid","name":"News"}},
+            "toRecipients":[{"emailAddress":{"address":"list@example.invalid"}}],"ccRecipients":[],
+            "inferenceClassification":"other","subject":"Weekly","receivedDateTime":"2026-10-18T10:00:00Z","body":{"contentType":"text","content":"Hi"}});
+        let signals = mail_item(&a, &mail).unwrap().unwrap().signals;
+        assert_eq!(
+            (signals.addressed, signals.audience, signals.bulk),
+            (Addressed::NotListed, Some(1), true)
+        );
+        let mut focused = mail.clone();
+        focused["toRecipients"] =
+            serde_json::json!([{"emailAddress":{"address":"OWNER@example.invalid"}}]);
+        focused["inferenceClassification"] = "focused".into();
+        let signals = mail_item(&a, &focused).unwrap().unwrap().signals;
+        assert_eq!((signals.addressed, signals.bulk), (Addressed::To, false));
+        // A delta page without recipient fields (an older cursor) knows nothing either way.
+        let mut old = mail.clone();
+        old.as_object_mut().unwrap().remove("toRecipients");
+        assert_eq!(
+            mail_item(&a, &old).unwrap().unwrap().signals.addressed,
+            Addressed::Unknown
+        );
+
+        let teams = account(Provider::Teams);
+        let message = serde_json::json!({"id":"1","messageType":"message","createdDateTime":"2026-10-18T10:00:00Z",
+            "from":{"user":{"id":"son","displayName":"Son"}},"body":{"contentType":"text","content":"hi"}});
+        let one = chat_item(&teams, "19:a_b@unq.gbl.spaces", "owner", &message)
+            .unwrap()
+            .unwrap();
+        assert_eq!(one.signals.addressed, Addressed::Direct);
+        let group = chat_item(&teams, "19:abc@thread.v2", "owner", &message)
+            .unwrap()
+            .unwrap();
+        assert_eq!(group.signals.addressed, Addressed::Group);
+        let mut app_message = message.clone();
+        app_message["from"] =
+            serde_json::json!({"user":null,"application":{"id":"bot","displayName":"Workflow"}});
+        let item = chat_item(&teams, "19:abc@thread.v2", "owner", &app_message)
+            .unwrap()
+            .unwrap();
+        assert!(item.signals.automated);
     }
     #[test]
     fn mail_translation_preserves_reply_to_flags_html_and_immutable_path_segments() {

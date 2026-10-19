@@ -15,9 +15,33 @@ pub struct DecisionJob {
     pub provider: DecisionProvider,
     pub model: String,
     pub timeout_ms: u64,
-    pub input: String,
-    pub questions: BTreeMap<String, String>,
+    /// The communication and its addressing, as a JSON object.
+    pub input: Value,
+    pub questions: BTreeMap<String, Question>,
 }
+
+/// One yes/no question. `yes`/`no` describe the boundary when the wording alone is ambiguous.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Question {
+    pub instructions: String,
+    pub yes: Option<&'static str>,
+    pub no: Option<&'static str>,
+}
+impl Question {
+    fn plain(instructions: &str) -> Self {
+        Self {
+            instructions: instructions.into(),
+            yes: None,
+            no: None,
+        }
+    }
+}
+
+/// Was it written by a person, and is it meant for the owner? Asked separately and combined
+/// in code, as TypeSafe recommends for judgments with more than one part.
+const PERSON: &str = "attention__person";
+const FOR_YOU: &str = "attention__for_you";
+const BODY_LIMIT: usize = 4_000;
 
 impl DecisionJob {
     pub fn build(message: &Message, settings: &Settings) -> Result<Self> {
@@ -35,14 +59,41 @@ impl DecisionJob {
             bail!("external AI processing is disabled for this account");
         }
         let mut questions = BTreeMap::new();
-        questions.insert("spam".into(), settings.spam.prompt.clone());
+        questions.insert("spam".into(), Question::plain(&settings.spam.prompt));
         for profile in &settings.profiles {
-            questions.insert(format!("focus__{}", profile.id), profile.prompt.clone());
+            questions.insert(
+                format!("focus__{}", profile.id),
+                Question::plain(&profile.prompt),
+            );
+        }
+        if settings.spam.enabled && settings.spam.for_you {
+            questions.insert(PERSON.into(), Question {
+                instructions: "Was `communication` written by a person for its recipients, rather than generated automatically by a system, app, service or marketing tool?".into(),
+                yes: Some("A person composed it: a message, reply, question, request, plan or update, including a person's comment that a service such as an issue tracker forwarded"),
+                no: Some("Generated automatically: notifications, alerts, sign-in codes, receipts, confirmations, statements, reports, digests, newsletters or marketing"),
+            });
+            questions.insert(FOR_YOU.into(), Question {
+                instructions: "Is `communication` meant for `owner` personally, or for a small group or conversation that `owner` takes part in?".into(),
+                yes: Some("Sent to the owner, to a few named people including the owner, or in a chat or thread the owner is part of"),
+                no: Some("A broadcast to a mailing list, customers, subscribers, members or the public, or meant for someone else"),
+            });
         }
         let bounded = |text: &str, limit| text.chars().take(limit).collect::<String>();
-        let input = serde_json::to_string(
-            &json!({"sender": bounded(&message.sender, 320), "subject": bounded(&message.subject, 2000), "body": bounded(&message.body, 10_000), "source": message.provider().map(|p| p.label())}),
-        )?;
+        let signals = &message.signals;
+        let input = json!({
+            "owner": {"address": (!account.username.is_empty()).then(|| bounded(&account.username, 320))},
+            "communication": {
+                "source": message.provider().map(|p| p.label()),
+                "from": bounded(&message.sender, 320),
+                "reply_to": message.target.as_ref().map(|t| t.recipients.iter().filter(|r| r.contains('@')).map(|r| bounded(r, 320)).take(10).collect::<Vec<_>>()),
+                "addressing": signals.addressed.describe(),
+                "visible_recipients": signals.audience,
+                "mailing_list_or_bulk_headers": signals.bulk,
+                "automated_sender": signals.automated,
+                "subject": bounded(&message.subject, 2000),
+                "body": bounded(&message.body, BODY_LIMIT),
+            },
+        });
         Ok(Self {
             message: message.id,
             fingerprint: policy::fingerprint(message, settings),
@@ -67,10 +118,28 @@ impl DecisionJob {
         };
         match self.provider {
             DecisionProvider::Jev => {
-                json!({"model": self.model, "state": self.input, "questions": self.questions.iter().map(|(name,prompt)| (name.clone(), json!({"type":"noul", "instructions":instructions(prompt)}))).collect::<serde_json::Map<_,_>>()})
+                let questions = self.questions.iter().map(|(name, q)| {
+                    let mut question =
+                        json!({"type": "noul", "instructions": instructions(&q.instructions)});
+                    if let (Some(yes), Some(no)) = (q.yes, q.no) {
+                        question["criteria"] = json!({"true": yes, "false": no});
+                    }
+                    (name.clone(), question)
+                });
+                json!({"model": self.model, "state": self.input, "questions": questions.collect::<serde_json::Map<_,_>>()})
             }
             DecisionProvider::OpenAI => {
-                json!({"model":self.model, "input":self.input, "questions":self.questions.iter().map(|(name,prompt)| json!({"type":"predicate", "name":name, "instructions":instructions(prompt)})).collect::<Vec<_>>()})
+                // Predicates take instructions only, so the boundary descriptions go inline.
+                let questions = self.questions.iter().map(|(name, q)| {
+                    let text = match (q.yes, q.no) {
+                        (Some(yes), Some(no)) => {
+                            format!("{} Yes: {yes}. No: {no}.", q.instructions)
+                        }
+                        _ => q.instructions.clone(),
+                    };
+                    json!({"type": "predicate", "name": name, "instructions": instructions(&text)})
+                });
+                json!({"model": self.model, "input": self.input.to_string(), "questions": questions.collect::<Vec<_>>()})
             }
         }
     }
@@ -126,6 +195,8 @@ impl DecisionJob {
         let spam = probabilities
             .remove("spam")
             .context("missing spam answer")?;
+        let person = probabilities.remove(PERSON);
+        let for_you = probabilities.remove(FOR_YOU);
         let profiles = probabilities
             .into_iter()
             .map(|(name, p)| (name.trim_start_matches("focus__").to_owned(), p))
@@ -135,6 +206,8 @@ impl DecisionJob {
             provider: self.provider,
             profiles,
             spam,
+            person,
+            for_you,
         })
     }
 }

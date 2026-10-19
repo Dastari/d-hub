@@ -82,6 +82,14 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
             Style::default().fg(p.muted),
         ),
         Span::styled(
+            match app.filtered_count() {
+                0 => String::new(),
+                n if app.settings.show_spam => format!(" · {n} filtered shown"),
+                n => format!(" · {n} hidden"),
+            },
+            Style::default().fg(p.muted),
+        ),
+        Span::styled(
             if app.live_service {
                 "  LIVE"
             } else if app.live_feed {
@@ -611,19 +619,19 @@ mod tests {
             .iter_mut()
             .find(|m| m.id == target.incoming)
             .unwrap();
-        incoming.sender = "Apple <noreply@example.invalid>".into();
+        incoming.sender = "Apple <hello@example.invalid>".into();
         assert_eq!(
             reply_context(&app, &{
                 let mut t = target.clone();
-                t.recipients = vec!["noreply@example.invalid".into()];
+                t.recipients = vec!["hello@example.invalid".into()];
                 t
             }),
-            "Apple <noreply@example.invalid>"
+            "Apple <hello@example.invalid>"
         );
         let frame = snapshot(&mut app, 100, 40).unwrap();
         assert!(frame.lines().any(|l| l.starts_with("Apple  ")), "{frame}");
         assert!(
-            !frame.contains("Apple <noreply@example.invalid> <"),
+            !frame.contains("Apple <hello@example.invalid> <"),
             "{frame}"
         );
     }

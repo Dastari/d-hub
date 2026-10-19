@@ -29,11 +29,19 @@ pub struct SpamPolicy {
     pub prompt: String,
     pub threshold: f64,
     pub local_terms: Vec<String>,
+    /// Hide mail whose replies would only reach no-reply addresses, and messages the provider
+    /// marks as automated (Auto-Submitted mail, Teams apps, Discord bots). No AI needed.
+    pub no_reply: bool,
+    /// With AI decisions on, also ask whether a person wrote it and whether it is meant for
+    /// the owner or a group they are in; hide it when either is unlikely.
+    pub for_you: bool,
+    /// Hide when either for-you probability is below this.
+    pub for_you_threshold: f64,
 }
 
 impl Default for SpamPolicy {
     fn default() -> Self {
-        Self { enabled: true, prompt: "Is this unsolicited spam, a promotional email, marketing newsletter or sales offer rather than a personal or transactional communication? Do not exclude receipts, security alerts or messages from actual people just because they contain a link.".into(), threshold: 0.85, local_terms: vec![] }
+        Self { enabled: true, prompt: "Is this unsolicited spam, a promotional email, marketing newsletter or sales offer rather than a personal or transactional communication? Do not exclude receipts, security alerts or messages from actual people just because they contain a link.".into(), threshold: 0.85, local_terms: vec![], no_reply: true, for_you: true, for_you_threshold: 0.35 }
     }
 }
 
@@ -297,6 +305,7 @@ pub fn validate(
     }
     if !probability(ai.threshold)
         || !probability(spam.threshold)
+        || !probability(spam.for_you_threshold)
         || !(100..=30_000).contains(&ai.timeout_ms)
     {
         bail!("thresholds must be 0–1; AI timeout must be 100–30000 ms");
@@ -361,4 +370,10 @@ pub struct Classification {
     pub provider: DecisionProvider,
     pub profiles: BTreeMap<String, f64>,
     pub spam: f64,
+    /// Probability a person wrote it; absent when the for-you questions were not asked.
+    #[serde(default)]
+    pub person: Option<f64>,
+    /// Probability it is meant for the owner or a group they are in.
+    #[serde(default)]
+    pub for_you: Option<f64>,
 }

@@ -27,7 +27,7 @@ impl SettingsSection {
             Self::Feed => "Feed & composer",
             Self::Profiles => "Focus profiles",
             Self::Ai => "AI decisions",
-            Self::Spam => "Spam filtering",
+            Self::Spam => "Filtering",
         }
     }
 }
