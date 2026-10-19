@@ -341,3 +341,7 @@ Tests cover:
 - the split empty-feed reasons.
 
 All 202 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass.
+
+## v0.4.8 publication
+
+[v0.4.8](https://github.com/dastari/d-hub/releases/tag/v0.4.8) is published (focus decides filtering; undecided mail stays in every focus). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39333165734) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39333166050) passed. Locally, all 202 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.8, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
