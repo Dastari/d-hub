@@ -1,8 +1,9 @@
-Enter sends, a one-line footer, and an empty feed that says why.
+Focus decides what's filtered, and your messages are back.
 
-- **Enter sends** from the reply box. Shift+Enter, Ctrl+Enter, Alt+Enter or Ctrl+J add a new line, and F5 still sends. If your terminal can't tell Shift+Enter from Enter, the footer shows `^J newline` instead of `⇧⏎ newline`. Shift+Enter would then send, so use Ctrl+J.
-- **One bottom line.** Notices show for about eight seconds. Otherwise the line shows new arrivals and a coloured dot for each account's connection, with names when there's room.
-- **Preview separator.** The dotted line takes the selected message's source colour and fades out. It's hidden when nothing is selected.
-- **Empty feed.** Instead of a bare "No messages match", it lists what's hidden and how to show it: dismissed (D), filtered (S), waiting for decisions, an active search, or other sources and focus profiles.
+- **Fixed: a focus no longer hides real messages.** Without AI decisions, Work and Home hid every live message. Messages without a decision (AI off, pending or failed) now stay visible in every focus.
+- **No focus shows everything**, including spam and no-reply mail. Filtered messages are labelled (· no-reply, · promotional) but not hidden. The header says "No focus".
+- **Inside a focus** (Work, Home or your own: `:profile add NAME`, `:profile prompt NAME`), spam, promotions, no-reply and automated mail are always hidden first. Then the focus prompt decides, once AI decisions are on (`:auth ai`, `ai.enabled`). `S` shows what was hidden.
+- An empty feed separates "outside Home focus · f" from "in other sources · ←→". Switching focus shows a notice explaining what it does.
+- The "↓N new" count only includes arrivals inside your focus that aren't filtered.
 
-Decision quality on real mail is untested. Real-account acceptance for Teams, Office 365 and iCloud is still pending the owner's sign-in. No license has been selected.
+d-hub doesn't send desktop notifications yet. Decision quality on real mail is untested. Real-account acceptance for Teams, Office 365 and iCloud is still pending the owner's sign-in. No license has been selected.
