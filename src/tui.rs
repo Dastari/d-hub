@@ -8,6 +8,7 @@ mod event_loop;
 mod feed;
 mod help;
 mod input;
+mod links;
 mod preview;
 mod settings;
 mod theme;
@@ -77,4 +78,6 @@ struct HitAreas {
     feed_items: Vec<(Rect, MessageId)>,
     /// Messages fully visible in the feed, used as the keyboard page size.
     feed_page: usize,
+    /// Links in the preview pane.
+    links: Vec<(Rect, String)>,
 }

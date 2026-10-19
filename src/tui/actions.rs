@@ -165,3 +165,11 @@ pub(super) fn open_discord(app: &mut App) {
         }
     }
 }
+
+/// Opens a preview link; the notice names the real host, whatever the link text said.
+pub(super) fn open_link(app: &mut App, url: &str) {
+    app.notice = match links::open(url) {
+        Ok(()) => format!("Opening {}", safe_text(&links::short(url))),
+        Err(error) => format!("Could not open link · {error}"),
+    };
+}

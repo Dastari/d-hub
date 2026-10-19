@@ -89,9 +89,24 @@ pub fn text(value: &str) -> String {
     while !clean.is_char_boundary(end) {
         end -= 1;
     }
+    let kept = &clean[..end];
+    // Rendered HTML lists its links at the end; keep those the retained text still uses.
+    let mut references = String::new();
+    for line in clean[end..].lines() {
+        let Some((number, _)) = line.strip_prefix('[').and_then(|r| r.split_once("]: ")) else {
+            continue;
+        };
+        if !number.is_empty()
+            && number.bytes().all(|b| b.is_ascii_digit())
+            && kept.contains(&format!("][{number}]"))
+            && references.len() + line.len() < BODY_LIMIT / 2
+        {
+            references.push('\n');
+            references.push_str(line);
+        }
+    }
     format!(
-        "{}\n[Preview truncated; open the original client for complete content]",
-        &clean[..end]
+        "{kept}\n[Preview truncated; open the original client for complete content]\n{references}"
     )
 }
 pub fn html(value: &str) -> String {
@@ -236,6 +251,18 @@ impl Transport for Network {
 
 #[cfg(test)]
 mod html_tests {
+    #[test]
+    fn truncated_html_keeps_the_links_its_text_still_uses() {
+        let filler = "word ".repeat(super::BODY_LIMIT / 5);
+        let body = format!(
+            "[early][1] {filler} [late][2]\n\n[1]: https://a.example/1\n[2]: https://a.example/2"
+        );
+        let text = super::text(&body);
+        assert!(text.contains("[1]: https://a.example/1"), "kept link");
+        assert!(!text.contains("[2]: "), "link only cut text used");
+        assert!(text.contains("[Preview truncated"));
+    }
+
     #[test]
     fn layout_tables_render_as_text_without_borders() {
         let rendered = super::html(

@@ -111,7 +111,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
     };
     feed::draw(frame, parts[1], p, app, &mut hit);
 
-    app.preview_bounds = preview::draw(frame, parts[2], p, app);
+    app.preview_bounds = preview::draw(frame, parts[2], p, app, &mut hit);
 
     frame.render_widget(
         Block::default().style(Style::default().bg(p.surface)),

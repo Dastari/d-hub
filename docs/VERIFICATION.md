@@ -345,3 +345,23 @@ All 202 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts 
 ## v0.4.8 publication
 
 [v0.4.8](https://github.com/dastari/d-hub/releases/tag/v0.4.8) is published (focus decides filtering; undecided mail stays in every focus). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39333165734) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39333166050) passed. Locally, all 202 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.8, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Links in the preview
+
+Owner request: links in previews without full URLs, and clicking opens them.
+- **Source format:** rendered HTML already stores anchors as `[text][n]` with an `[n]: url` list at the end, so cached mail needs no migration.
+- **Preview:** the reference list is hidden. Anchors show their text; bare URLs (and anchors whose text is a URL) show their host, with "/…" when there is a path. `<https://…>` brackets and trailing sentence punctuation are dropped. Links are underlined and wrap with their own spaces.
+- **Clicking:** a click inside a link's area opens it with xdg-open, or with wslview and then explorer.exe on WSL. The URL is passed as one argument; there is no shell.
+- **What opens:** only http, https and mailto URLs, with no whitespace or control characters, up to 4096 bytes. The notice names the real host, including `user@host` tricks.
+- **Feed snippets** use the same labels. The reader keeps full URLs.
+- **Long bodies:** when a body is cut at 16 KB, references still used by the kept text are retained, and an anchor whose reference is missing reads as its plain text.
+
+Tests cover:
+- parsing: anchors, bare and bracketed URLs, balanced parentheses, words and the shown host;
+- wrapping inside multi-word links and of long words;
+- the refusal of javascript:, file:, spaced or empty URLs, with launches recorded rather than run;
+- a rendered mail and Discord preview whose underlined label exactly covers its click area and whose screen shows no raw URL or reference;
+- a click that launches the exact URL without touching the composer;
+- the truncation rule.
+
+All 207 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. A real browser launch on the owner's WSL or Omarchy desktop has not been tested.

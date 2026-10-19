@@ -35,19 +35,46 @@ fn burst<'a>(app: &'a App, message: &'a Message) -> Vec<&'a Message> {
 }
 
 /// Wraps each source line separately so a message's own line breaks survive. The pane is small,
-/// so blank lines (mostly left behind by HTML and plain-text paragraph spacing) and table rules
-/// are dropped; the reader keeps paragraph breaks.
-fn body_lines(body: &str, width: usize) -> Vec<String> {
-    let lines: Vec<_> = safe_text(body)
-        .lines()
-        .filter(|line| !line.trim().is_empty() && !crate::domain::rule_line(line))
-        .flat_map(|line| wrapped(line, width))
+/// so blank lines (mostly left behind by HTML and plain-text paragraph spacing), table rules and
+/// the HTML link list are dropped; links show as their text or host. The reader keeps
+/// paragraph breaks and full URLs.
+fn body_lines(body: &str, width: usize) -> Vec<Vec<links::Piece>> {
+    let lines: Vec<_> = links::parse(&safe_text(body))
+        .iter()
+        .flat_map(|words| links::wrap(words, width))
         .collect();
     if lines.is_empty() {
-        vec!["(no text)".into()]
+        vec![vec![("(no text)".into(), None)]]
     } else {
         lines
     }
+}
+
+/// A styled row, recording where its links are as (row, column, width, url).
+fn row(
+    pieces: Vec<links::Piece>,
+    lead: Option<Span<'static>>,
+    index: usize,
+    p: Palette,
+    hits: &mut Vec<(usize, u16, u16, String)>,
+) -> Line<'static> {
+    let mut x = lead.as_ref().map_or(0, |s| s.width());
+    let mut spans: Vec<_> = lead.into_iter().collect();
+    for (text, link) in pieces {
+        let width = text.width();
+        let style = match link {
+            Some(url) => {
+                hits.push((index, x as u16, width as u16, url));
+                Style::default()
+                    .fg(p.second)
+                    .add_modifier(Modifier::UNDERLINED)
+            }
+            None => Style::default().fg(p.fg),
+        };
+        spans.push(Span::styled(text, style));
+        x += width;
+    }
+    Line::from(spans)
 }
 
 /// Reader text: table rules dropped and any run of blank lines shown as one.
@@ -63,23 +90,24 @@ fn paragraphs(body: &str) -> String {
     out.join("\n")
 }
 
-/// Preview lines and the line range of the selected message.
-fn layout(
-    app: &App,
-    message: &Message,
-    width: usize,
-    p: Palette,
-) -> (Vec<Line<'static>>, Range<usize>) {
+/// Preview lines, the line range of the selected message and where links are.
+type Layout = (
+    Vec<Line<'static>>,
+    Range<usize>,
+    Vec<(usize, u16, u16, String)>,
+);
+
+fn layout(app: &App, message: &Message, width: usize, p: Palette) -> Layout {
     let muted = Style::default().fg(p.muted);
     let mut lines = vec![];
+    let mut hits = vec![];
     if message.is_mail() {
-        lines.extend(
-            body_lines(&message.body, width)
-                .into_iter()
-                .map(|l| Line::styled(l, Style::default().fg(p.fg))),
-        );
+        for pieces in body_lines(&message.body, width) {
+            let line = row(pieces, None, lines.len(), p, &mut hits);
+            lines.push(line);
+        }
         let all = 0..lines.len();
-        return (lines, all);
+        return (lines, all, hits);
     }
     let burst = burst(app, message);
     let header: Vec<_> = when::day(burst[0].timestamp)
@@ -105,7 +133,7 @@ fn layout(
         } else {
             muted
         };
-        for (index, line) in body_lines(&m.body, width.saturating_sub(indent).max(1))
+        for (index, pieces) in body_lines(&m.body, width.saturating_sub(indent).max(1))
             .into_iter()
             .enumerate()
         {
@@ -114,21 +142,25 @@ fn layout(
             } else {
                 Span::raw(" ".repeat(indent))
             };
-            lines.push(Line::from(vec![
-                lead,
-                Span::styled(line, Style::default().fg(p.fg)),
-            ]));
+            let line = row(pieces, Some(lead), lines.len(), p, &mut hits);
+            lines.push(line);
         }
         if m.id == message.id {
             selected = start..lines.len();
         }
     }
-    (lines, selected)
+    (lines, selected, hits)
 }
 
-/// Draws the preview under a dotted rule and returns its page size and the scroll offsets
-/// (relative to the default view) that PageUp/PageDown may reach.
-pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usize, isize, isize) {
+/// Draws the preview under a dotted rule, records its links as click areas and returns its page
+/// size and the scroll offsets (relative to the default view) that PageUp/PageDown may reach.
+pub(super) fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    p: Palette,
+    app: &App,
+    hit: &mut HitAreas,
+) -> (usize, isize, isize) {
     let muted = Style::default().fg(p.muted);
     let rule = Rect { height: 1, ..area };
     let area = padded(Rect {
@@ -154,9 +186,21 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usi
         .collect();
     frame.render_widget(Paragraph::new(Line::from(dots)), rule);
     let (width, height) = (area.width as usize, area.height as usize);
-    let (lines, selected) = layout(app, message, width, p);
+    let (lines, selected, links) = layout(app, message, width, p);
     let total = lines.len();
+    // Links on lines first..first+rows, drawn from screen row `top`.
+    let mut place = |first: usize, rows: usize, top: u16| {
+        for (line, x, w, url) in &links {
+            if (first..first + rows).contains(line) {
+                let y = top + (line - first) as u16;
+                let w = (*w).min(area.width.saturating_sub(*x));
+                hit.links
+                    .push((Rect::new(area.x + x, area.y + y, w, 1), url.clone()));
+            }
+        }
+    };
     if total <= height || height == 0 {
+        place(0, height, 0);
         frame.render_widget(Paragraph::new(lines), area);
         return (height.max(1), 0, 0);
     }
@@ -182,6 +226,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usi
     if start > 0 && height >= 2 {
         window.push(Line::styled("↑ PgUp earlier · o reads all", more));
     }
+    place(start, rows, window.len() as u16);
     window.extend(lines[start..(start + rows).min(total)].iter().cloned());
     if start + rows < total && window.len() < height {
         window.push(Line::styled("↓ PgDn more · o reads all", more));
@@ -250,7 +295,7 @@ mod tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         let p = palette(Theme::Midnight, Duration::ZERO, true);
         terminal
-            .draw(|f| app.preview_bounds = draw(f, f.area(), p, app))
+            .draw(|f| app.preview_bounds = draw(f, f.area(), p, app, &mut HitAreas::default()))
             .unwrap();
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -300,6 +345,70 @@ mod tests {
         messages[4].subject = "Sunday".into();
         messages[4].target.as_mut().unwrap().recipients = vec!["mira@example.invalid".into()];
         app(messages)
+    }
+
+    #[test]
+    fn links_show_as_text_or_host_and_a_click_opens_the_real_url() {
+        let mut app = inbox();
+        find(&mut app, 5).body = "Your trip: [view receipt][1] or see \
+            https://www.example.com/trips/123?utm=x.\n\n[1]: https://pay.example/r/9?token=abc"
+            .into();
+        find(&mut app, 3).body = "map https://maps.example/q?x=1".into();
+        let p = palette(Theme::Midnight, Duration::ZERO, true);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 8)).unwrap();
+        for (id, label, url) in [
+            (5, "view receipt", "https://pay.example/r/9?token=abc"),
+            (
+                5,
+                "example.com/…",
+                "https://www.example.com/trips/123?utm=x",
+            ),
+            (3, "maps.example/…", "https://maps.example/q?x=1"),
+        ] {
+            app.select(MessageId(id));
+            let mut hits = HitAreas::default();
+            terminal
+                .draw(|f| {
+                    draw(f, f.area(), p, &app, &mut hits);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let (area, _) = hits
+                .links
+                .iter()
+                .find(|(_, u)| u == url)
+                .unwrap_or_else(|| panic!("{url} not clickable: {:?}", hits.links));
+            let shown: String = (area.x..area.right())
+                .map(|x| buffer[(x, area.y)].symbol())
+                .collect();
+            assert_eq!(shown, label);
+            assert!(
+                buffer[(area.x, area.y)]
+                    .modifier
+                    .contains(Modifier::UNDERLINED)
+            );
+            let screen: String = buffer.content().iter().map(|c| c.symbol()).collect();
+            assert!(
+                !screen.contains("https://") && !screen.contains("[1]"),
+                "{screen}"
+            );
+            links::LAUNCHED.with(|l| l.borrow_mut().clear());
+            let click = crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: area.x + 1,
+                row: area.y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+            let draft = app.session.composer.clone();
+            super::super::input::mouse(&mut app, click, &hits);
+            links::LAUNCHED.with(|l| assert_eq!(*l.borrow(), vec![url.to_owned()]));
+            assert!(app.notice.starts_with("Opening "), "{}", app.notice);
+            assert_eq!(
+                app.session.composer, draft,
+                "opening a link changes no reply"
+            );
+        }
     }
 
     #[test]

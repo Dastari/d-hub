@@ -404,7 +404,9 @@ pub(super) fn mouse(app: &mut App, mouse: MouseEvent, hits: &HitAreas) {
         MouseEventKind::Down(MouseButton::Left)
             if matches!(app.mode, Mode::Insert | Mode::Navigate) =>
         {
-            if let Some((_, index)) = hits
+            if let Some((_, url)) = hits.links.iter().find(|(area, _)| area.contains(point)) {
+                actions::open_link(app, url);
+            } else if let Some((_, index)) = hits
                 .attachments
                 .iter()
                 .find(|(area, _)| area.contains(point))

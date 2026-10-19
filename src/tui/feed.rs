@@ -33,13 +33,12 @@ pub(super) fn source_label(app: &App, message: &Message) -> String {
     }
 }
 
-/// Body text on one line, without quoted reply history.
+/// Body text on one line, without quoted reply history; links read as their text or host.
 fn body_text(message: &Message) -> String {
-    safe_text(&message.body)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('>') && !crate::domain::rule_line(line))
-        .flat_map(str::split_whitespace)
+    super::links::plain(&safe_text(&message.body))
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.starts_with('>'))
         .collect::<Vec<_>>()
         .join(" ")
 }
