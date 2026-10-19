@@ -14,10 +14,17 @@ pub(super) const NEW_NAME: &str = "new_account.name";
 pub(super) const NEW_PROFILE: &str = "new_profile.id";
 
 pub(in crate::tui) fn multiline(name: &str) -> bool {
-    [".prompt", ".terms", "local_terms", ".resources"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
-        || matches!(name, "profiles" | "accounts")
+    [
+        "prompt",
+        ".terms",
+        "local_terms",
+        ".resources",
+        "_yes",
+        "_no",
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix))
+        || matches!(name, "profiles" | "accounts" | "ai.about")
 }
 
 /// Keys while a row is editing in place.

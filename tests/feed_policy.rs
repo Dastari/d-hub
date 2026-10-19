@@ -595,3 +595,65 @@ fn decision_state_carries_addressing_and_a_bounded_body_and_skips_locally_hidden
             .is_none_or(|(id, _, _)| *id != MessageId(5))
     );
 }
+
+#[test]
+fn for_you_questions_and_about_me_are_owner_editable_and_invalidate_old_answers() {
+    let mut app = job_app(DecisionProvider::Jev);
+    let old = evaluate(&job(&app), &FakeDecision(answers(&job(&app), 0.1))).unwrap();
+    assert!(
+        job(&app).request()["state"]["owner"]["about"].is_null(),
+        "blank About me sends nothing"
+    );
+    app.settings
+        .set(
+            "ai.about",
+            "Toby. Work: Gema. Groups: family chat, graphql-orm maintainers.",
+        )
+        .unwrap();
+    app.settings
+        .set(
+            "spam.for_you_prompt",
+            "Would `owner` want to read or answer `communication` personally?",
+        )
+        .unwrap();
+    app.settings.set("spam.for_you_no", "").unwrap();
+    let request = job(&app).request();
+    assert_eq!(
+        request["state"]["owner"]["about"],
+        "Toby. Work: Gema. Groups: family chat, graphql-orm maintainers."
+    );
+    let for_you = &request["questions"]["attention__for_you"];
+    assert!(
+        for_you["instructions"]
+            .as_str()
+            .unwrap()
+            .ends_with("Would `owner` want to read or answer `communication` personally?")
+    );
+    // A blank description is left out; the other one stays.
+    assert!(for_you["criteria"]["true"].is_string());
+    assert!(for_you["criteria"].get("false").is_none());
+    // Answers to the old wording no longer apply.
+    assert!(!app.apply_classification(MessageId(5), old));
+    // OpenAI predicates carry the same wording inline.
+    app.settings.set("ai.provider", "openai").unwrap();
+    let request = job(&app).request();
+    let question = request["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["name"] == "attention__for_you")
+        .unwrap();
+    let text = question["instructions"].as_str().unwrap();
+    assert!(
+        text.contains("personally? Yes: ") && !text.contains("No: "),
+        "{text}"
+    );
+    // Shared validation: questions stay nonempty and descriptions bounded.
+    assert!(app.settings.set("spam.person_prompt", "  ").is_err());
+    assert!(app.settings.set("ai.about", &"x".repeat(2001)).is_err());
+    assert!(
+        app.settings
+            .set("spam.person_yes", &"x".repeat(2001))
+            .is_err()
+    );
+}

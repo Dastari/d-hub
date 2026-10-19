@@ -329,6 +329,11 @@ impl Settings {
                 self.ai.timeout_ms.to_string(),
                 "Timeout in milliseconds (100–30000)",
             ),
+            SettingRow::text(
+                "ai.about",
+                &self.ai.about,
+                "About you: name, work, groups you are in; sent with every decision",
+            ),
             SettingRow::choice(
                 "ai.hold_pending",
                 self.ai.hold_pending.to_string(),
@@ -367,6 +372,36 @@ impl Settings {
                 self.spam.for_you.to_string(),
                 "With AI decisions: hide what a person did not write to you or a group you are in",
                 &["true", "false"],
+            ),
+            SettingRow::text(
+                "spam.person_prompt",
+                &self.spam.person_prompt,
+                "For-you question 1: was it written by a person?",
+            ),
+            SettingRow::text(
+                "spam.person_yes",
+                &self.spam.person_yes,
+                "What a yes means for question 1 (blank leaves it out)",
+            ),
+            SettingRow::text(
+                "spam.person_no",
+                &self.spam.person_no,
+                "What a no means for question 1 (blank leaves it out)",
+            ),
+            SettingRow::text(
+                "spam.for_you_prompt",
+                &self.spam.for_you_prompt,
+                "For-you question 2: is it meant for you or a group you are in?",
+            ),
+            SettingRow::text(
+                "spam.for_you_yes",
+                &self.spam.for_you_yes,
+                "What a yes means for question 2 (blank leaves it out)",
+            ),
+            SettingRow::text(
+                "spam.for_you_no",
+                &self.spam.for_you_no,
+                "What a no means for question 2 (blank leaves it out)",
             ),
             SettingRow::text(
                 "spam.for_you_threshold",
@@ -569,6 +604,13 @@ impl Settings {
             "spam.no_reply" => self.spam.no_reply = value.parse()?,
             "spam.for_you" => self.spam.for_you = value.parse()?,
             "spam.for_you_threshold" => self.spam.for_you_threshold = value.parse()?,
+            "spam.person_prompt" => self.spam.person_prompt = value.into(),
+            "spam.person_yes" => self.spam.person_yes = value.into(),
+            "spam.person_no" => self.spam.person_no = value.into(),
+            "spam.for_you_prompt" => self.spam.for_you_prompt = value.into(),
+            "spam.for_you_yes" => self.spam.for_you_yes = value.into(),
+            "spam.for_you_no" => self.spam.for_you_no = value.into(),
+            "ai.about" => self.ai.about = value.into(),
             _ => {
                 let parts: Vec<_> = name.split('.').collect();
                 match parts.as_slice() {

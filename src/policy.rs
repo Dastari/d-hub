@@ -37,11 +37,27 @@ pub struct SpamPolicy {
     pub for_you: bool,
     /// Hide when either for-you probability is below this.
     pub for_you_threshold: f64,
+    /// "Was it written by a person?" and what a yes and a no mean (an empty description is
+    /// left out of the request).
+    pub person_prompt: String,
+    pub person_yes: String,
+    pub person_no: String,
+    /// "Is it meant for you or a group you are in?" and what a yes and a no mean.
+    pub for_you_prompt: String,
+    pub for_you_yes: String,
+    pub for_you_no: String,
 }
 
 impl Default for SpamPolicy {
     fn default() -> Self {
-        Self { enabled: true, prompt: "Is this unsolicited spam, a promotional email, marketing newsletter or sales offer rather than a personal or transactional communication? Do not exclude receipts, security alerts or messages from actual people just because they contain a link.".into(), threshold: 0.85, local_terms: vec![], no_reply: true, for_you: true, for_you_threshold: 0.35 }
+        Self { enabled: true, prompt: "Is this unsolicited spam, a promotional email, marketing newsletter or sales offer rather than a personal or transactional communication? Do not exclude receipts, security alerts or messages from actual people just because they contain a link.".into(), threshold: 0.85, local_terms: vec![], no_reply: true, for_you: true, for_you_threshold: 0.35,
+            person_prompt: "Was `communication` written by a person for its recipients, rather than generated automatically by a system, app, service or marketing tool?".into(),
+            person_yes: "A person composed it: a message, reply, question, request, plan or update, including a person's comment that a service such as an issue tracker forwarded".into(),
+            person_no: "Generated automatically: notifications, alerts, sign-in codes, receipts, confirmations, statements, reports, digests, newsletters or marketing".into(),
+            for_you_prompt: "Is `communication` meant for `owner` personally, or for a small group or conversation that `owner` takes part in?".into(),
+            for_you_yes: "Sent to the owner, to a few named people including the owner, or in a chat or thread the owner is part of".into(),
+            for_you_no: "A broadcast to a mailing list, customers, subscribers, members or the public, or meant for someone else".into(),
+        }
     }
 }
 
@@ -83,6 +99,9 @@ pub struct AiSettings {
     pub threshold: f64,
     pub timeout_ms: u64,
     pub hold_pending: bool,
+    /// Who the owner is (name, work, groups they belong to), sent with every decision as
+    /// `owner.about` so questions about "the owner" have something to go on. Empty sends none.
+    pub about: String,
 }
 
 impl Default for AiSettings {
@@ -94,6 +113,7 @@ impl Default for AiSettings {
             threshold: 0.6,
             timeout_ms: 5000,
             hold_pending: false,
+            about: String::new(),
         }
     }
 }
@@ -316,6 +336,23 @@ pub fn validate(
         || spam.prompt.len() > 8192
     {
         bail!("model and spam prompt must be nonempty and bounded");
+    }
+    if [&spam.person_prompt, &spam.for_you_prompt]
+        .iter()
+        .any(|p| p.trim().is_empty() || p.len() > 8192)
+        || [
+            &spam.person_yes,
+            &spam.person_no,
+            &spam.for_you_yes,
+            &spam.for_you_no,
+            &ai.about,
+        ]
+        .iter()
+        .any(|t| t.len() > 2000)
+    {
+        bail!(
+            "for-you questions must be nonempty (at most 8192 bytes); yes/no descriptions and About me at most 2000 bytes"
+        );
     }
     validate_terms(&spam.local_terms)
 }

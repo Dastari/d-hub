@@ -53,7 +53,7 @@ pub enum Command {
     },
     Configure {
         expected_revision: u64,
-        settings: crate::config::Settings,
+        settings: Box<crate::config::Settings>,
     },
     Resolve {
         expected_revision: u64,
@@ -498,7 +498,7 @@ pub fn serve(database: Database, path: &Path) -> Result<Option<PathBuf>> {
                                     expected_revision,
                                     &[Action::Configure {
                                         before: owner.app.settings.clone(),
-                                        settings,
+                                        settings: *settings,
                                     }],
                                 ) {
                                     Ok(()) => Reply::Snapshot {

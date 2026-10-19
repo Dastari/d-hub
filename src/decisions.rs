@@ -24,15 +24,20 @@ pub struct DecisionJob {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Question {
     pub instructions: String,
-    pub yes: Option<&'static str>,
-    pub no: Option<&'static str>,
+    pub yes: Option<String>,
+    pub no: Option<String>,
 }
 impl Question {
     fn plain(instructions: &str) -> Self {
+        Self::with(instructions, "", "")
+    }
+    /// Blank descriptions are left out.
+    fn with(instructions: &str, yes: &str, no: &str) -> Self {
+        let described = |text: &str| (!text.trim().is_empty()).then(|| text.trim().to_owned());
         Self {
-            instructions: instructions.into(),
-            yes: None,
-            no: None,
+            instructions: instructions.trim().into(),
+            yes: described(yes),
+            no: described(no),
         }
     }
 }
@@ -66,22 +71,24 @@ impl DecisionJob {
                 Question::plain(&profile.prompt),
             );
         }
-        if settings.spam.enabled && settings.spam.for_you {
-            questions.insert(PERSON.into(), Question {
-                instructions: "Was `communication` written by a person for its recipients, rather than generated automatically by a system, app, service or marketing tool?".into(),
-                yes: Some("A person composed it: a message, reply, question, request, plan or update, including a person's comment that a service such as an issue tracker forwarded"),
-                no: Some("Generated automatically: notifications, alerts, sign-in codes, receipts, confirmations, statements, reports, digests, newsletters or marketing"),
-            });
-            questions.insert(FOR_YOU.into(), Question {
-                instructions: "Is `communication` meant for `owner` personally, or for a small group or conversation that `owner` takes part in?".into(),
-                yes: Some("Sent to the owner, to a few named people including the owner, or in a chat or thread the owner is part of"),
-                no: Some("A broadcast to a mailing list, customers, subscribers, members or the public, or meant for someone else"),
-            });
+        let spam = &settings.spam;
+        if spam.enabled && spam.for_you {
+            questions.insert(
+                PERSON.into(),
+                Question::with(&spam.person_prompt, &spam.person_yes, &spam.person_no),
+            );
+            questions.insert(
+                FOR_YOU.into(),
+                Question::with(&spam.for_you_prompt, &spam.for_you_yes, &spam.for_you_no),
+            );
         }
         let bounded = |text: &str, limit| text.chars().take(limit).collect::<String>();
         let signals = &message.signals;
         let input = json!({
-            "owner": {"address": (!account.username.is_empty()).then(|| bounded(&account.username, 320))},
+            "owner": {
+                "address": (!account.username.is_empty()).then(|| bounded(&account.username, 320)),
+                "about": (!settings.ai.about.trim().is_empty()).then(|| bounded(settings.ai.about.trim(), 2000)),
+            },
             "communication": {
                 "source": message.provider().map(|p| p.label()),
                 "from": bounded(&message.sender, 320),
@@ -121,8 +128,11 @@ impl DecisionJob {
                 let questions = self.questions.iter().map(|(name, q)| {
                     let mut question =
                         json!({"type": "noul", "instructions": instructions(&q.instructions)});
-                    if let (Some(yes), Some(no)) = (q.yes, q.no) {
-                        question["criteria"] = json!({"true": yes, "false": no});
+                    if let Some(yes) = &q.yes {
+                        question["criteria"]["true"] = yes.as_str().into();
+                    }
+                    if let Some(no) = &q.no {
+                        question["criteria"]["false"] = no.as_str().into();
                     }
                     (name.clone(), question)
                 });
@@ -131,12 +141,13 @@ impl DecisionJob {
             DecisionProvider::OpenAI => {
                 // Predicates take instructions only, so the boundary descriptions go inline.
                 let questions = self.questions.iter().map(|(name, q)| {
-                    let text = match (q.yes, q.no) {
-                        (Some(yes), Some(no)) => {
-                            format!("{} Yes: {yes}. No: {no}.", q.instructions)
-                        }
-                        _ => q.instructions.clone(),
-                    };
+                    let mut text = q.instructions.clone();
+                    if let Some(yes) = &q.yes {
+                        text.push_str(&format!(" Yes: {yes}."));
+                    }
+                    if let Some(no) = &q.no {
+                        text.push_str(&format!(" No: {no}."));
+                    }
                     json!({"type": "predicate", "name": name, "instructions": instructions(&text)})
                 });
                 json!({"model": self.model, "input": self.input.to_string(), "questions": questions.collect::<Vec<_>>()})

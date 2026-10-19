@@ -284,3 +284,13 @@ All 195 Rust tests, formatting and warnings-denied Clippy pass. No TypeSafe requ
 ## v0.4.5 publication
 
 [v0.4.5](https://github.com/dastari/d-hub/releases/tag/v0.4.5) is published (filtering to what needs the owner: no-reply/automated rules and the Jev for-you questions). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39181220591) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39181219404) passed. Locally, all 195 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.5, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Editable for-you questions and About me
+
+On owner request, the two for-you questions and their yes/no descriptions are now settings: `spam.person_prompt/_yes/_no` and `spam.for_you_prompt/_yes/_no`, defaulting to the previous wording. A new `ai.about` field ("About me") is sent with every decision as `owner.about`. All of them are on Settings › Filtering and Settings › AI decisions, in `config`, and editable in place from `:spam person`, `:spam for-you` and `:about`. A fake-answer test checks four things:
+- the edited wording and About me reach the Jev request;
+- a blank description is left out of the Noul criteria, and OpenAI predicates receive the same wording inline;
+- answers to the old wording are rejected as stale;
+- shared validation refuses blank questions and descriptions or About text over 2000 bytes.
+
+A TUI test opens each command's row in place and saves About me. All 197 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. No TypeSafe request was made.

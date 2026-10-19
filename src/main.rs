@@ -289,7 +289,7 @@ fn persist_settings(
     if let Some(client) = client {
         client.request_snapshot(d_hub::ipc::Command::Configure {
             expected_revision: client.snapshot.revision,
-            settings: settings.clone(),
+            settings: Box::new(settings.clone()),
         })?;
         Ok(())
     } else {
@@ -422,7 +422,7 @@ fn run(cli: Cli) -> Result<()> {
                     if let Some(client) = &mut service {
                         client.request_snapshot(d_hub::ipc::Command::Configure {
                             expected_revision: client.snapshot.revision,
-                            settings: settings.clone(),
+                            settings: Box::new(settings.clone()),
                         })?;
                     } else {
                         settings.save(&path)?;
@@ -436,7 +436,7 @@ fn run(cli: Cli) -> Result<()> {
                     if let Some(client) = &mut service {
                         client.request_snapshot(d_hub::ipc::Command::Configure {
                             expected_revision: client.snapshot.revision,
-                            settings: settings.clone(),
+                            settings: Box::new(settings.clone()),
                         })?;
                     } else {
                         settings.save(&path)?;

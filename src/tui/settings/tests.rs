@@ -556,6 +556,49 @@ fn prompts_wrap_in_place_and_commands_open_their_row() {
 }
 
 #[test]
+fn about_me_and_the_for_you_questions_open_in_place_from_commands() {
+    let mut app = settings_app();
+    for (command, page, field) in [
+        (":about", SettingsSection::Ai, "ai.about"),
+        (":spam person", SettingsSection::Spam, "spam.person_prompt"),
+        (
+            ":spam for-you",
+            SettingsSection::Spam,
+            "spam.for_you_prompt",
+        ),
+    ] {
+        app.mode = Mode::Navigate;
+        super::super::run_command(&mut app, command);
+        assert_eq!(app.mode, Mode::EditSetting, "{command}");
+        assert_eq!(app.settings_page, SettingsPage::Section(page));
+        assert_eq!(items(&app)[app.setting_index], Item::Field(field.into()));
+        let screen = super::super::snapshot(&mut app, 110, 40).unwrap();
+        assert!(
+            screen.contains("Ctrl+S saves · Enter adds a line"),
+            "{screen}"
+        );
+        press(&mut app, KeyCode::Esc);
+    }
+    // About me saves through the shared schema like any other field.
+    app.mode = Mode::Navigate;
+    super::super::run_command(&mut app, ":about");
+    for c in "Toby".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    super::super::key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        4,
+        &mut None,
+        &mut None,
+        None,
+    );
+    assert_eq!(app.settings.ai.about, "Toby");
+    let screen = super::super::snapshot(&mut app, 110, 40).unwrap();
+    assert!(screen.contains("About me"), "{screen}");
+}
+
+#[test]
 fn credentials_typed_from_settings_are_masked_in_their_row() {
     let mut app = settings_app();
     app.settings

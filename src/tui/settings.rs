@@ -196,6 +196,7 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
             "ai.model",
             "ai.threshold",
             "ai.timeout_ms",
+            "ai.about",
             "ai.hold_pending",
         ]
         .map(field)
@@ -207,6 +208,12 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
             "spam.no_reply",
             "spam.for_you",
             "spam.for_you_threshold",
+            "spam.person_prompt",
+            "spam.person_yes",
+            "spam.person_no",
+            "spam.for_you_prompt",
+            "spam.for_you_yes",
+            "spam.for_you_no",
             "spam.prompt",
             "spam.threshold",
             "spam.local_terms",

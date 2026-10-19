@@ -572,7 +572,7 @@ fn stale_composer_and_configuration_edits_never_overwrite_newer_work() {
     control
         .request_snapshot(Command::Configure {
             expected_revision: control.snapshot.revision,
-            settings: changed.clone(),
+            settings: Box::new(changed.clone()),
         })
         .unwrap();
     poll(&mut writer);

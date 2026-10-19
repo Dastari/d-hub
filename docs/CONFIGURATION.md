@@ -20,6 +20,9 @@ The strict TOML schema remains `schema_version = 1`; older flat configs load wit
 | `spam.enabled`, `.prompt`, `.threshold`, `.local_terms` | true (master switch for all filtering), independent promotion question, 0.85, no local exclusion terms |
 | `spam.no_reply` | true; hide mail sent from or replying only to no-reply addresses, and senders the provider marks automated (Auto-Submitted mail, Teams apps, Discord bots). No AI needed |
 | `spam.for_you`, `.for_you_threshold` | true, 0.35; with AI decisions on, also ask whether a person wrote it and whether it is meant for the owner or a group they are in, and hide it when either probability is below the threshold |
+| `spam.person_prompt`, `.person_yes`, `.person_no` | The "written by a person?" question and what a yes and a no mean; nonempty question up to 8192 bytes, descriptions up to 2000 (blank leaves one out). `:spam person` edits it |
+| `spam.for_you_prompt`, `.for_you_yes`, `.for_you_no` | The "meant for you or a group you are in?" question and its yes/no descriptions, with the same limits. `:spam for-you` edits it |
+| `ai.about` | Empty; who you are (name, work, groups you belong to), up to 2000 bytes, sent with every decision as `owner.about`. `:about` edits it |
 | `ai.enabled`, `.provider`, `.model` | false, jev, jev-latest; changing provider selects its documented default model |
 | `ai.threshold`, `.timeout_ms`, `.hold_pending` | 0.6, 5000 (100–30000), false |
 | `accounts` | JSON account list, maximum 32, no secrets; `account add PROVIDER [ID] [--name NAME]`, `:account add [PROVIDER [ID]]` or Settings › Accounts › + Add account creates metadata; omitted IDs use the first free `provider`, `provider-2`, … |
