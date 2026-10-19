@@ -294,3 +294,7 @@ On owner request, the two for-you questions and their yes/no descriptions are no
 - shared validation refuses blank questions and descriptions or About text over 2000 bytes.
 
 A TUI test opens each command's row in place and saves About me. All 197 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. No TypeSafe request was made.
+
+## v0.4.6 publication
+
+[v0.4.6](https://github.com/dastari/d-hub/releases/tag/v0.4.6) is published (About me and editable for-you questions). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39184100173) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39184100099) passed. Locally, all 197 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.6, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
