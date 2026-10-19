@@ -365,3 +365,7 @@ Tests cover:
 - the truncation rule.
 
 All 207 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. A real browser launch on the owner's WSL or Omarchy desktop has not been tested.
+
+## v0.4.9 publication
+
+[v0.4.9](https://github.com/dastari/d-hub/releases/tag/v0.4.9) is published (preview links as text or host; click to open). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39340531773) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39340532247) passed. Locally, all 207 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.9, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
