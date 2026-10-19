@@ -1,9 +1,8 @@
-Focus decides what's filtered, and your messages are back.
+Links in previews are short and clickable.
 
-- **Fixed: a focus no longer hides real messages.** Without AI decisions, Work and Home hid every live message. Messages without a decision (AI off, pending or failed) now stay visible in every focus.
-- **No focus shows everything**, including spam and no-reply mail. Filtered messages are labelled (· no-reply, · promotional) but not hidden. The header says "No focus".
-- **Inside a focus** (Work, Home or your own: `:profile add NAME`, `:profile prompt NAME`), spam, promotions, no-reply and automated mail are always hidden first. Then the focus prompt decides, once AI decisions are on (`:auth ai`, `ai.enabled`). `S` shows what was hidden.
-- An empty feed separates "outside Home focus · f" from "in other sources · ←→". Switching focus shows a notice explaining what it does.
-- The "↓N new" count only includes arrivals inside your focus that aren't filtered.
+- **Readable links.** An email's links show as their text ("View your receipt"), underlined, and the list of URLs at the bottom is hidden. Bare URLs show just the site, such as `example.com/…`. Feed rows use the same short labels, and the full reader (`o`) still shows complete URLs.
+- **Click to open.** A click opens a link in your browser, or your mail app for email addresses. On WSL that's Windows' default browser, through `wslview` or `explorer.exe`. Opening a link never changes your selection or reply.
+- **Safety.** Only web and email links open. The notice names the real site, whatever the link text says.
+- Very long emails keep the links for the part that's still shown.
 
-d-hub doesn't send desktop notifications yet. Decision quality on real mail is untested. Real-account acceptance for Teams, Office 365 and iCloud is still pending the owner's sign-in. No license has been selected.
+Opening links from the keyboard isn't supported yet. Decision quality on real mail is untested. Real-account acceptance for Teams, Office 365 and iCloud is still pending the owner's sign-in. No license has been selected.
