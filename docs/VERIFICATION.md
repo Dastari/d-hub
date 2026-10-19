@@ -256,3 +256,7 @@ Owner feedback on v0.4.3: Delete dismissed once, then did nothing, while the com
 - **Flaky iCloud test fixed.** The fake IMAP server in the connection-reuse test wrote its logout reply in pieces, and the client could close after reading BYE. That failed the test about one run in several. The server now writes once and tolerates the close; 30 consecutive runs pass.
 
 All 188 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. Only fictional data was used.
+
+## v0.4.4 publication
+
+[v0.4.4](https://github.com/dastari/d-hub/releases/tag/v0.4.4) is published (Delete with emptied drafts, borderless HTML, tighter previews). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39178725957) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39178725937) passed. Locally, all 188 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.4, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
