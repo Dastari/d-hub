@@ -107,7 +107,7 @@ fn layout(app: &App, messages: &[&Message], width: usize, p: Palette, limit: usi
         if app.dismissed(message.id) {
             meta.push_str(" · dismissed");
         }
-        if let Some(reason) = app.filtered(message) {
+        if let Some(reason) = app.filter_rule(message) {
             meta.push_str(&format!(" · {}", reason.label()));
         }
         let rest = width.saturating_sub(INDENT).max(1);
@@ -512,8 +512,15 @@ pub(super) mod tests {
             message(1, Provider::ICloud, "Mira", "a", "hi"),
             message(2, Provider::ICloud, "Shop", "b", "sale"),
             message(3, Provider::Discord, "Son", "c", "hey"),
+            message(4, Provider::ICloud, "Kai", "d", "dinner"),
         ]);
         app.live_service = true;
+        // Live messages are untagged; the last keeps a demo tag outside the Work focus.
+        for message in &mut app.session.messages {
+            message.focus = crate::domain::Focus::All;
+        }
+        app.session.messages[3].focus = crate::domain::Focus::Personal;
+        app.set_profile("work");
         app.session.messages[1].target.as_mut().unwrap().recipients =
             vec!["noreply@example.invalid".into()];
         app.session
@@ -529,7 +536,8 @@ pub(super) mod tests {
             "1 dismissed · D shows them",
             "1 filtered · S shows them",
             "searching \"invoice\"",
-            "1 in other sources or focus profiles",
+            "1 outside Work focus · f changes focus",
+            "1 in other sources · ←→ changes source",
         ] {
             assert!(frame.contains(reason), "{reason}: {frame}");
         }

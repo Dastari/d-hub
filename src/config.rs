@@ -262,12 +262,12 @@ impl Settings {
     }
     pub fn profile_label(&self) -> &str {
         if self.focus == "all" {
-            "All"
+            "No focus"
         } else {
             self.profiles
                 .iter()
                 .find(|p| p.id == self.focus)
-                .map_or("All", |p| p.name.as_str())
+                .map_or("No focus", |p| p.name.as_str())
         }
     }
     pub fn cycle_focus(&self) -> String {

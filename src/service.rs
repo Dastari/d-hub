@@ -560,8 +560,9 @@ impl Owner {
                     .message_state
                     .insert(id, self.database.local_state(id)?);
                 let message = item.message(id, account);
-                // Filtered arrivals (no-reply, automated) are stored but not announced as new.
-                if staged.filtered(&message).is_none() {
+                // Arrivals outside the focus, or filtered (no-reply, automated), are stored but
+                // not announced as new.
+                if staged.profile_matches(&message) && staged.filtered(&message).is_none() {
                     staged.new_items += 1;
                 }
                 staged.session.messages.push(message);

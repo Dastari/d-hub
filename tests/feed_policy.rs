@@ -28,6 +28,8 @@ fn job_app(provider: DecisionProvider) -> App {
     app.settings.ai.enabled = true;
     app.settings.ai.provider = provider;
     app.settings.ai.model = provider.default_model().into();
+    // Filtering applies inside a focus; message 5 is a personal fixture.
+    app.settings.focus = "personal".into();
     app
 }
 fn job(app: &App) -> DecisionJob {
@@ -449,6 +451,7 @@ fn mail(app: &mut App, id: u64, reply_to: &str) -> MessageId {
 #[test]
 fn no_reply_and_automated_mail_is_hidden_without_ai_and_shown_again_with_s() {
     let mut app = app();
+    app.settings.focus = "personal".into();
     let noreply = mail(&mut app, 40, "no-reply@example.invalid");
     let donot = mail(&mut app, 41, "DoNotReply@example.invalid");
     let person = mail(&mut app, 42, "mira@example.invalid");
@@ -481,8 +484,29 @@ fn no_reply_and_automated_mail_is_hidden_without_ai_and_shown_again_with_s() {
         frame.contains("no-reply") && frame.contains("automated"),
         "{frame}"
     );
-    // The rule has its own setting, through the shared schema.
+    // No focus shows everything, still labelled, and S is not needed.
     app.settings.show_spam = false;
+    app.set_profile("all");
+    assert!(
+        [noreply, donot, apple, bot, person]
+            .iter()
+            .all(|id| visible(&app, *id))
+    );
+    assert_eq!(app.filtered_count(), 0);
+    assert!(
+        app.session
+            .composer
+            .reply_target()
+            .is_none_or(|t| ![noreply, donot, apple, bot].contains(&t.incoming))
+    );
+    let frame = d_hub::tui::snapshot(&mut app, 120, 60).unwrap();
+    assert!(
+        frame.contains("No focus") && frame.contains("no-reply"),
+        "{frame}"
+    );
+    app.set_profile("personal");
+    assert!(!visible(&app, noreply));
+    // The rule has its own setting, through the shared schema.
     app.settings.set("spam.no_reply", "false").unwrap();
     app.refresh_filters();
     assert!(visible(&app, noreply) && visible(&app, bot));
@@ -656,4 +680,35 @@ fn for_you_questions_and_about_me_are_owner_editable_and_invalidate_old_answers(
             .set("spam.person_yes", &"x".repeat(2001))
             .is_err()
     );
+}
+
+#[test]
+fn a_focus_without_decisions_keeps_untagged_live_mail_and_decisions_sort_it() {
+    let mut app = job_app(DecisionProvider::Jev);
+    let live = mail(&mut app, 60, "ana@example.invalid");
+    app.session
+        .messages
+        .iter_mut()
+        .find(|m| m.id == live)
+        .unwrap()
+        .focus = d_hub::domain::Focus::All;
+    let visible = |app: &App| app.visible().iter().any(|m| m.id == live);
+    for focus in ["work", "personal"] {
+        app.set_profile(focus);
+        assert!(visible(&app), "undecided mail stays in {focus}");
+    }
+    // A decision places it: in Home, out of Work.
+    app.set_profile("work");
+    let message = app.session.messages.iter().find(|m| m.id == live).unwrap();
+    let job = DecisionJob::build(message, &app.settings).unwrap();
+    let answers = json!({"answers": job.questions.keys().map(|name| (name.clone(), json!({"type":"noul", "noul": match name.as_str() {
+        "spam" => 0.05, "focus__work" => 0.05, _ => 0.95
+    }}))).collect::<serde_json::Map<_,_>>()});
+    let result = evaluate(&job, &FakeDecision(answers)).unwrap();
+    assert!(app.apply_classification(live, result));
+    assert!(!visible(&app));
+    app.set_profile("personal");
+    assert!(visible(&app));
+    app.set_profile("all");
+    assert!(visible(&app));
 }

@@ -8,7 +8,7 @@ The strict TOML schema remains `schema_version = 1`; older flat configs load wit
 
 | Keys | Default / behaviour |
 | --- | --- |
-| `focus` | `all`, or any configured profile ID; `personal` displays Home; `home` is an input alias unless a distinct home profile exists |
+| `focus` | `all` (No focus: everything, unfiltered), or any configured profile ID (filtering, then the profile prompt); `personal` displays Home; `home` is an input alias unless a distinct home profile exists |
 | `source` | `all`; navigation cycles all, icloud, discord, teams, email, office365; Email combines both mail providers |
 | `theme`, `reduced_motion`, `insert_on_focus` | midnight, false, true |
 | `reply_first` | true: Up/Down saves/restores replies per incoming message, Left/Right switches sources, Alt+arrows edits text; false restores traditional insert arrows |

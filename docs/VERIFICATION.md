@@ -320,3 +320,24 @@ On owner request, plain Enter in the reply box sends. Shift+Enter, Ctrl+Enter, A
 ## v0.4.7 publication
 
 [v0.4.7](https://github.com/dastari/d-hub/releases/tag/v0.4.7) is published (Enter sends, one-line footer, coloured preview rule, empty-feed reasons). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39195688165) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39195688168) passed. Locally, all 201 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.7, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Focus decides filtering
+
+Owner report (v0.4.7): the Home focus showed nothing, with "90 in other sources or focus profiles". The 90 messages were cached. Without AI decisions, a focus fell back to the demo fixtures' work/personal tags, which live messages never carry, so Home hid every live message. Decisions never controlled caching.
+
+The owner's model, now implemented:
+- **No focus** (`focus = all`, shown as "No focus") shows everything, including spam, with filtered messages still labelled.
+- **Inside a focus,** filtering always applies (no-reply, automated, local terms, promotion, and the for-you answers), then the profile's prompt.
+- **Undecided messages** (AI off, pending or failed) stay in every focus unless the profile has local terms. Demo fixtures keep their tags.
+- **Unaffected by focus:** the decision scheduler still skips locally filtered messages, and the composer never follows a filtered arrival on its own.
+- **New arrivals** only count when they are in the focus and unfiltered.
+- **Empty-feed reasons** now separate "N outside FOCUS focus · f" from "N in other sources · ←→".
+- **Focus notices:** switching focus says what the focus does, including when its prompt needs AI decisions.
+
+Tests cover:
+- untagged live mail staying in Work and Home until a decision places it;
+- No focus showing filtered mail labelled, with filtered count 0 and no automatic retargeting;
+- filtering tests now running inside a focus;
+- the split empty-feed reasons.
+
+All 202 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass.

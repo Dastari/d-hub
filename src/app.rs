@@ -379,6 +379,16 @@ impl App {
             settings: self.settings.clone(),
         });
         self.reconcile_filters();
+        let name = crate::domain::safe_text(self.settings.profile_label());
+        self.notice = if id == "all" {
+            "No focus · everything shows, filtered messages labelled · f picks a focus.".into()
+        } else if self.settings.ai.enabled {
+            format!("{name} focus · hides spam and what the {name} prompt rules out · f next.")
+        } else {
+            format!(
+                "{name} focus · hides spam; its prompt needs AI decisions (:auth ai, ai.enabled) · f next."
+            )
+        };
     }
 
     pub fn set_source(&mut self, source: SourceFilter) {
@@ -716,10 +726,19 @@ impl App {
         self.filtered(message).is_some()
     }
 
-    /// Why the feed hides a message, if it does. Local rules apply at once; decision answers
-    /// apply when a current result exists. Unclassified messages stay visible (unless
-    /// `ai.hold_pending`), so a failed or slow decision never loses anything.
+    /// Why the feed hides a message, if it does. Filtering applies only in a focus profile;
+    /// with focus off the feed shows everything, labelled by `filter_rule`.
     pub fn filtered(&self, message: &Message) -> Option<Filtered> {
+        if self.settings.focus == "all" {
+            return None;
+        }
+        self.filter_rule(message)
+    }
+
+    /// Which filter matches a message, whatever the focus. Local rules apply at once; decision
+    /// answers apply when a current result exists. Unclassified messages stay visible (unless
+    /// `ai.hold_pending`), so a failed or slow decision never loses anything.
+    pub fn filter_rule(&self, message: &Message) -> Option<Filtered> {
         let spam = &self.settings.spam;
         if !spam.enabled {
             return None;
@@ -778,11 +797,22 @@ impl App {
                 crate::domain::safe_text(&self.query)
             ));
         }
-        let elsewhere = self.session.messages.len().saturating_sub(in_view.len());
-        if elsewhere > 0 {
+        let in_source = self
+            .session
+            .messages
+            .iter()
+            .filter(|m| m.matches_source(self.settings.source))
+            .count();
+        let outside_focus = in_source - in_view.len();
+        if outside_focus > 0 {
             reasons.push(format!(
-                "{elsewhere} in other sources or focus profiles · ←→ source, f focus"
+                "{outside_focus} outside {} focus · f changes focus",
+                crate::domain::safe_text(self.settings.profile_label())
             ));
+        }
+        let elsewhere = self.session.messages.len() - in_source;
+        if elsewhere > 0 {
+            reasons.push(format!("{elsewhere} in other sources · ←→ changes source"));
         }
         reasons
     }
@@ -802,7 +832,10 @@ impl App {
             .count()
     }
 
-    fn profile_matches(&self, message: &Message) -> bool {
+    /// Whether a message belongs to the current focus profile. Messages without a decision
+    /// (AI off, pending or failed) stay in every profile unless the profile has terms, so a
+    /// focus never hides mail just because nobody has judged it yet.
+    pub fn profile_matches(&self, message: &Message) -> bool {
         if self.settings.focus == "all" {
             return true;
         }
@@ -823,9 +856,11 @@ impl App {
         if !profile.terms.is_empty() {
             return policy::matches_terms(message, &profile.terms);
         }
-        profile
-            .fixture_focus
-            .is_none_or(|focus| message.matches(focus))
+        // Demo fixtures carry a work/personal tag; live messages are untagged.
+        message.focus == crate::domain::Focus::All
+            || profile
+                .fixture_focus
+                .is_none_or(|focus| message.matches(focus))
     }
 
     fn eligible(&self, message: &Message) -> bool {
@@ -834,7 +869,8 @@ impl App {
             && self.profile_matches(message)
             && message.matches_source(self.settings.source)
             && !self.dismissed(message.id)
-            && !self.spam_match(message)
+            // Even with focus off, the composer never follows a filtered arrival on its own.
+            && self.filter_rule(message).is_none()
             && !self.hold_pending(message)
     }
 
@@ -1265,7 +1301,7 @@ impl App {
                 .filter(|m| {
                     !self.dismissed(m.id)
                         && self.classification(m).is_none()
-                        && self.filtered(m).is_none()
+                        && self.filter_rule(m).is_none()
                 })
                 .collect();
             candidates.sort_by_key(|m| std::cmp::Reverse((m.timestamp, m.id)));

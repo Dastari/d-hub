@@ -31,11 +31,9 @@ fn email_combines_mail_sources_and_intersects_with_focus() {
     app.set_focus(Focus::Personal);
     assert!(app.visible().is_empty());
     assert!(app.session.composer.reply_target().is_none());
-    assert!(
-        tui::snapshot(&mut app, 80, 36)
-            .unwrap()
-            .contains("in other sources or focus profiles")
-    );
+    let frame = tui::snapshot(&mut app, 80, 36).unwrap();
+    assert!(frame.contains("1 outside Home focus"), "{frame}");
+    assert!(frame.contains("4 in other sources"), "{frame}");
 }
 
 #[test]
