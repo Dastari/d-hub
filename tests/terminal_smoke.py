@@ -133,7 +133,12 @@ def main():
             terminal = Terminal(["demo", "--data-dir", temporary])
             terminal.wait(lambda: b"LOCKED" in terminal.output, "restored locked draft")
             assert state(directory)["composer"]["draft"]["body"] == body
-            terminal.send(b"\x1b[18~\x1b[15~")  # F7 failure, F5 send
+            terminal.send(b"\n")  # raw LF is Ctrl+J: a newline, never a send
+            terminal.wait(lambda: state(directory)["composer"]["draft"]["body"] == body + "\n", "Ctrl+J newline")
+            terminal.send(b"\x7f")
+            terminal.wait(lambda: state(directory)["composer"]["draft"]["body"] == body, "backspace")
+            assert state(directory)["composer"]["send"] == "Ready"
+            terminal.send(b"\x1b[18~\r")  # F7 failure, Enter sends
             terminal.wait(lambda: "Failed" in state(directory)["composer"]["send"], "mock failure")
             assert state(directory)["composer"]["draft"]["target"] == target
             terminal.send(b"\x1b[18~\x1b[15~")  # F7 uncertain, F5 send

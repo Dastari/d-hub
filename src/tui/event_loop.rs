@@ -14,7 +14,7 @@ impl TerminalGuard {
             EnableFocusChange,
             EnableMouseCapture
         )?;
-        // Unsupported terminals ignore this protocol; F5 remains an unambiguous send key.
+        // Unsupported terminals ignore this protocol; Ctrl+J and F5 stay unambiguous there.
         execute!(
             io::stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
@@ -59,6 +59,7 @@ pub(super) fn run_inner(
         bail!("interactive terminal required; use demo --snapshot for a text preview");
     }
     let _guard = TerminalGuard::enter()?;
+    app.modified_keys = terminal::supports_keyboard_enhancement().unwrap_or(false);
     let mut terminal = DefaultTerminal::new(ratatui::backend::CrosstermBackend::new(io::stdout()))?;
     // Restore terminal modes before the panic report as well as on ordinary errors.
     let old_hook = std::panic::take_hook();
@@ -108,6 +109,7 @@ pub(super) fn run_inner(
             app.notice = "Prefix expired · ? for controls".into();
             dirty = true;
         }
+        dirty |= app.expire_notice();
         if dirty || !app.settings.reduced_motion {
             terminal.draw(|frame| {
                 hits = draw(frame, &mut app, started.elapsed());

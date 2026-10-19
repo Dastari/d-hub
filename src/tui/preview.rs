@@ -130,10 +130,7 @@ fn layout(
 /// (relative to the default view) that PageUp/PageDown may reach.
 pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usize, isize, isize) {
     let muted = Style::default().fg(p.muted);
-    frame.render_widget(
-        Paragraph::new(Line::styled("·".repeat(area.width as usize), muted)),
-        Rect { height: 1, ..area },
-    );
+    let rule = Rect { height: 1, ..area };
     let area = padded(Rect {
         y: area.y + 1,
         height: area.height.saturating_sub(1),
@@ -146,6 +143,16 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usi
         );
         return (1, 0, 0);
     };
+    // The rule takes the selected message's source colour and fades into the background.
+    let source = provider_color(message.provider(), p.accent);
+    let width = rule.width.max(1) as f32;
+    let dots: Vec<_> = (0..rule.width)
+        .map(|x| {
+            let t = x as f32 / width;
+            Span::styled("·", Style::default().fg(mix(source, p.bg, 0.15 + 0.75 * t)))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(Line::from(dots)), rule);
     let (width, height) = (area.width as usize, area.height as usize);
     let (lines, selected) = layout(app, message, width, p);
     let total = lines.len();
@@ -182,6 +189,18 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &App) -> (usi
     frame.render_widget(Paragraph::new(window), area);
     let page = height.saturating_sub(2).max(1);
     (page, -(default as isize), last as isize - default as isize)
+}
+
+/// `a` moved towards `b` by `t` (0–1); colours that are not RGB stay `a`.
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    match (a, b) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let blend =
+                |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)).round() as u8;
+            Color::Rgb(blend(r1, r2), blend(g1, g2), blend(b1, b2))
+        }
+        _ => a,
+    }
 }
 
 /// Title and body for the reader: the full email with its headers, or the chat burst as a

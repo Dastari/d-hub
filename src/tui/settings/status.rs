@@ -45,7 +45,7 @@ pub(crate) fn health(app: &App, account: &AccountConfig) -> (Health, String) {
     (state, safe_text(status))
 }
 
-pub(super) fn health_style(state: Health, p: Palette) -> (&'static str, Color) {
+pub(crate) fn health_style(state: Health, p: Palette) -> (&'static str, Color) {
     match state {
         Health::Ok => ("●", p.success),
         Health::Pending => ("◌", p.accent),

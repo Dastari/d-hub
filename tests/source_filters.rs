@@ -34,7 +34,7 @@ fn email_combines_mail_sources_and_intersects_with_focus() {
     assert!(
         tui::snapshot(&mut app, 80, 36)
             .unwrap()
-            .contains("No messages match")
+            .contains("in other sources or focus profiles")
     );
 }
 

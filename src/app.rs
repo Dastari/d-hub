@@ -79,6 +79,8 @@ pub struct App {
     pub update_requested: bool,
     pub update_status: Option<crate::update::Status>,
     pub live_service: bool,
+    /// The terminal reports modified keys, so Shift+Enter differs from Enter.
+    pub modified_keys: bool,
     pub service_supports_discord_qr: bool,
     pub provider_status: BTreeMap<String, String>,
     pub service_socket: Option<std::path::PathBuf>,
@@ -111,6 +113,8 @@ pub struct App {
     /// PageUp/PageDown offset of the preview pane from its default position, kept only while
     /// the same message stays selected.
     pub preview_scroll: (Option<MessageId>, isize),
+    /// When the current notice first appeared; notices clear themselves after a few seconds.
+    pub notice_since: Option<(String, std::time::Instant)>,
     /// Lines per page and the offsets the last drawn preview could reach.
     pub preview_bounds: (usize, isize, isize),
     pub reader_query: String,
@@ -172,6 +176,7 @@ impl App {
             update_requested: false,
             update_status: None,
             live_service: false,
+            modified_keys: false,
             service_supports_discord_qr: false,
             provider_status: BTreeMap::new(),
             service_socket: None,
@@ -200,6 +205,7 @@ impl App {
             reader: None,
             reader_scroll: 0,
             preview_scroll: (None, 0),
+            notice_since: None,
             preview_bounds: (1, 0, 0),
             reader_query: String::new(),
             edit_key: None,
@@ -614,6 +620,30 @@ impl App {
         }
     }
 
+    /// Clears a notice once it has been visible for a few seconds, so the status bar returns.
+    /// Returns true when the screen needs redrawing.
+    pub fn expire_notice(&mut self) -> bool {
+        const VISIBLE: std::time::Duration = std::time::Duration::from_secs(8);
+        if self.notice.is_empty() {
+            self.notice_since = None;
+            return false;
+        }
+        match &self.notice_since {
+            Some((text, since)) if *text == self.notice => {
+                if since.elapsed() < VISIBLE {
+                    return false;
+                }
+                self.notice.clear();
+                self.notice_since = None;
+                true
+            }
+            _ => {
+                self.notice_since = Some((self.notice.clone(), std::time::Instant::now()));
+                false
+            }
+        }
+    }
+
     /// Pages the preview of the selected message; a new selection starts at its default view.
     pub fn scroll_preview(&mut self, pages: isize) {
         let (page, low, high) = self.preview_bounds;
@@ -715,6 +745,46 @@ impl App {
             return Some(Filtered::NotForYou);
         }
         None
+    }
+
+    /// Why the feed is empty, in order: what is hidden and how to show it. Empty when nothing
+    /// has arrived for this source and focus at all.
+    pub fn empty_reasons(&self) -> Vec<String> {
+        let in_view: Vec<_> = self
+            .session
+            .messages
+            .iter()
+            .filter(|m| m.matches_source(self.settings.source) && self.profile_matches(m))
+            .collect();
+        let count = |f: &dyn Fn(&Message) -> bool| in_view.iter().filter(|m| f(m)).count();
+        let mut reasons = vec![];
+        let dismissed = count(&|m| self.dismissed(m.id));
+        if dismissed > 0 && !self.settings.show_dismissed {
+            reasons.push(format!("{dismissed} dismissed · D shows them"));
+        }
+        let filtered = count(&|m| !self.dismissed(m.id) && self.filtered(m).is_some());
+        if filtered > 0 && !self.settings.show_spam {
+            reasons.push(format!("{filtered} filtered · S shows them"));
+        }
+        let held = count(&|m| !self.dismissed(m.id) && self.hold_pending(m));
+        if held > 0 {
+            reasons.push(format!(
+                "{held} waiting for AI decisions · ai.hold_pending holds them"
+            ));
+        }
+        if !self.query.is_empty() {
+            reasons.push(format!(
+                "searching \"{}\" · / then clear it to see all",
+                crate::domain::safe_text(&self.query)
+            ));
+        }
+        let elsewhere = self.session.messages.len().saturating_sub(in_view.len());
+        if elsewhere > 0 {
+            reasons.push(format!(
+                "{elsewhere} in other sources or focus profiles · ←→ source, f focus"
+            ));
+        }
+        reasons
     }
 
     /// How many messages the current source and focus hide through filtering.

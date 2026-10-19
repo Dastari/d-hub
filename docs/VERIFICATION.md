@@ -298,3 +298,21 @@ A TUI test opens each command's row in place and saves About me. All 197 Rust te
 ## v0.4.6 publication
 
 [v0.4.6](https://github.com/dastari/d-hub/releases/tag/v0.4.6) is published (About me and editable for-you questions). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39184100173) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39184100099) passed. Locally, all 197 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.6, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Compact bottom bar and coloured preview rule
+
+Owner feedback: the two bottom lines (the "active · 0 new · status" line and the yellow notice line) took too much room in the narrow drawer. They are now one line.
+- **Notices** show for about eight seconds, cut with an ellipsis when narrow. The event loop clears them, including with reduced motion.
+- **Status** then takes the line: "↓N new" when there are arrivals, and one coloured connection dot per enabled account, using the settings pages' health markers. Names show when they fit; otherwise only the dots. The simulated active/inactive text is gone.
+- **Preview rule:** the dotted rule takes the selected message's source colour, fades into the background, and is hidden with no selection.
+
+TestBackend tests cover:
+- the notice, its expiry, and named versus dots-only status at 100 and 30 cells;
+- the absence of "active"/"inactive";
+- the rule's fading colours and that it is hidden without a selection.
+
+All 199 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. An empty feed now lists why it is empty: dismissed, filtered, held for decisions, an active search, or other sources/profiles. A feed test covers each reason and the never-synced case.
+
+## Enter sends
+
+On owner request, plain Enter in the reply box sends. Shift+Enter, Ctrl+Enter, Alt+Enter and Ctrl+J insert a newline instead; F5 still sends, and navigation-mode Ctrl/Alt+Enter no longer sends. Pasted text is unaffected because bracketed paste arrives as one event. At startup the drawer asks the terminal whether it reports modified keys. Where it does not, Shift+Enter arrives as plain Enter and would send, so the footer then shows `^J newline` instead of `⇧⏎ newline`. A terminal that answers neither query delays the first frame by about two seconds: the test PTYs do this, while terminals answer it immediately. A unit test sends each modified Enter and Ctrl+J and checks for newlines without a send, then checks that Enter starts the mock send. The demo PTY sends a raw LF (Ctrl+J) as a newline and a raw CR as a send. All 201 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts pass. The kitty-protocol path (Shift+Enter in Ghostty) and Windows Terminal on WSL were not tested here.

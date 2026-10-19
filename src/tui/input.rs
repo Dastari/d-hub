@@ -61,12 +61,7 @@ pub(super) fn key(
         return false;
     }
     if matches!(app.mode, Mode::Insert | Mode::Navigate) {
-        if (key.code == KeyCode::Enter
-            && key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT))
-            || key.code == KeyCode::F(5)
-        {
+        if key.code == KeyCode::F(5) {
             if pending.is_none() {
                 *pending = send(app);
             }
@@ -132,6 +127,16 @@ pub(super) fn key(
                 }
             } else if key.code == KeyCode::Esc {
                 app.mode = Mode::Navigate;
+            } else if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+                // Enter sends; modified Enter and Ctrl+J add a newline instead.
+                if pending.is_none() {
+                    *pending = send(app);
+                }
+            } else if control && key.code == KeyCode::Char('j') {
+                if app.session.composer.editable() && app.editor.key(KeyEvent::from(KeyCode::Enter))
+                {
+                    app.update_body();
+                }
             } else if app.session.composer.editable() && app.editor.key(key) {
                 app.update_body();
             }
@@ -625,5 +630,48 @@ mod tests {
         assert_eq!(app.settings.source, SourceFilter::ICloud);
         assert_eq!(app.mode, Mode::Insert);
         assert_eq!(app.session.composer.draft, original);
+    }
+
+    #[test]
+    fn enter_sends_while_modified_enter_and_ctrl_j_add_newlines() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        assert_eq!(app.mode, Mode::Insert);
+        let mut pending = None;
+        let mut prefix = None;
+        let mut press = |app: &mut App, code, modifiers| {
+            key(
+                app,
+                KeyEvent::new(code, modifiers),
+                4,
+                &mut pending,
+                &mut prefix,
+                None,
+            );
+        };
+        press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+        for modifiers in [
+            KeyModifiers::SHIFT,
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+        ] {
+            press(&mut app, KeyCode::Enter, modifiers);
+        }
+        press(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::NONE);
+        assert_eq!(app.editor.text, "a\n\n\n\nb");
+        assert_eq!(app.session.composer.send, crate::composer::SendState::Ready);
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(pending.is_some(), "Enter starts the mock send");
+        assert!(matches!(
+            app.session.composer.send,
+            crate::composer::SendState::Submitting(_)
+        ));
+        assert!(
+            app.session
+                .composer
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.body == "a\n\n\n\nb")
+        );
     }
 }

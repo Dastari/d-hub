@@ -4,7 +4,7 @@
 mod actions;
 mod labels;
 mod render;
-mod status;
+pub(super) mod status;
 #[cfg(test)]
 mod tests;
 

@@ -99,7 +99,7 @@ For initial inspection, leave sending disabled. Once you have checked account id
 d-hub config --socket "$XDG_RUNTIME_DIR/d-hub/service-live.sock" set accounts.personal.allow_send true
 ```
 
-F5/Ctrl+Enter/Alt+Enter sends the typed reply; Enter adds a newline. The header says LIVE and the footer says SEND. Up/Down saves and restores per-message drafts; Left/Right cycles sources; Alt+arrows moves the cursor. Delete dismisses and marks read while no reply is started; PageUp/PageDown scroll the preview. Escape enters navigation; `e` dismisses, `D` includes dismissed, `u` toggles unread, `f` cycles Work/Home/custom profiles, `,` opens settings, and `:connections` shows account status. A shared reader never changes the drawer recipient.
+Enter (or F5) sends the typed reply; Shift+Enter, Ctrl+Enter, Alt+Enter or Ctrl+J adds a newline. The footer shows ^J instead of ⇧⏎ when the terminal cannot report Shift+Enter. The header says LIVE and the footer says SEND. Up/Down saves and restores per-message drafts; Left/Right cycles sources; Alt+arrows moves the cursor. Delete dismisses and marks read while no reply is started; PageUp/PageDown scroll the preview. Escape enters navigation; `e` dismisses, `D` includes dismissed, `u` toggles unread, `f` cycles Work/Home/custom profiles, `,` opens settings, and `:connections` shows account status. A shared reader never changes the drawer recipient.
 
 Only perform a first real send to an explicitly chosen test recipient/conversation. Check remote read changes, delivery and Sent behavior in the original client. Automated tests do not establish live account or Ghostty acceptance.
 

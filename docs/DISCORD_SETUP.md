@@ -40,7 +40,7 @@ Install libsecret's `secret-tool` and unlock your desktop keyring first (Arch pa
 2. Approve the sign-in on your phone. d-hub verifies the encrypted identity and the session's current user.
 3. Check the displayed username/user ID. Press **Enter** to store this identity in the keyring.
 4. Close the success screen. Run `:account enable personal` (using your account label), then `:connections`. Wait for **Discord DMs connected** before asking someone to send a new test DM. Existing QR credentials are reused; reauthenticate only if status requests it.
-5. To permit replies, set `accounts.personal.allow_send` to true in settings. Replies remain off by default. Enter adds a newline; F5/Ctrl+Enter submits a reply to the captured conversation. Accepted replies dismiss their original incoming message; uncertain results retain the draft and require checking Discord before an explicit resolution.
+5. To permit replies, set `accounts.personal.allow_send` to true in settings. Replies remain off by default. Shift+Enter or Ctrl+J adds a newline; Enter or F5 submits a reply to the captured conversation. Accepted replies dismiss their original incoming message; uncertain results retain the draft and require checking Discord before an explicit resolution.
 
 **Esc** cancels before saving. Expired, cancelled or failed sessions clear the QR; **r** creates a fresh session/key/code. A keyring save already explicitly started must finish before closing. The code is never cropped or scaled to fit a terminal: resize if the screen reports insufficient room. Unicode half-block rendering requires a normal monospace terminal; actual phone-camera/Ghostty acceptance remains unverified.
 

@@ -53,8 +53,8 @@ Modes are navigation, composer insert, command entry and modal dialog. An option
 | Focus next/previous pane | Tab/Shift+Tab | Outside text completion/dialog-specific use |
 | Reply/edit | i or r | Navigation |
 | Exit input to navigation | Escape | Insert; preserves draft |
-| Newline | Enter; also Shift+Enter where distinguishable | Insert |
-| Send | Ctrl+Enter, fallback Alt+Enter | Insert, after terminal capability check |
+| Newline | Shift+Enter, Ctrl+Enter or Alt+Enter where distinguishable; Ctrl+J everywhere | Insert |
+| Send | Enter; F5 | Enter in Insert; F5 in Insert or navigation |
 | Search | / | Navigation |
 | Command palette | : | Navigation |
 | Composer command | /attach, /summary | Insert at command position; literal slash otherwise |
@@ -88,7 +88,7 @@ sasha@example.invalid
 
 Your multiline reply…
 
-INSERT · Ctrl+Enter Send
+INSERT · ⏎ send · ⇧⏎ newline
 ```
 
 Consecutive messages in the current view that share provider, account and sender (and, for chats, conversation) stack under one heading: sender in bold, then provider · account name. Grouping follows the visible order, so in All another provider's message between them starts a new group, while a source filter that hides it lets them merge. Each message shows its read dot, time and up to three wrapped preview lines with quoted history removed. Mail uses the first line for its subject, and chat placeholder subjects such as "Direct message" are not shown. Rows vary in height: clicks use the rendered row areas, keyboard paging uses the number of fully visible messages, and the feed scrolls a newly selected message into view without undoing wheel scrolling. A heading stays visible when the view starts mid-group.
@@ -113,7 +113,7 @@ Reader provides sender/account/recipients, subject, complete body, quoted histor
 
 ## Read, dismiss and profile filtering
 
-A dotted rule separates the feed from the preview pane. An email preview shows only its text body (HTML rendered to text, layout tables without borders, no blank lines or table rules; the reader keeps single paragraph breaks); the feed row already names the sender, subject and time, and the reader (`o`) adds the full From/Date header. Chat stacks preview as a timed transcript. PageUp/PageDown page the preview without changing the selection or reply target; a new selection opens at its default view. The reply box starts one line tall and grows with the draft to six lines, then scrolls. Feed headings, notices and the composer show a mail sender's display name rather than the raw `Name <address>` header. Rendering removes invisible formatting characters (soft hyphens, zero-width spaces, fillers, bidi controls) that terminals and layout width tables disagree about.
+A dotted rule separates the feed from the preview pane; it takes the selected message's source colour, fades towards the background across the width and is hidden when nothing is selected. The drawer ends in one bottom line: a notice for about eight seconds after it appears (cut with an ellipsis when narrow), then compact status. Status is "↓N new" when messages arrived while reading, then one coloured dot per enabled account (● connected, ◌ connecting, ! problem, ○ off), named when they fit and dots only when narrow. The demo shows the next mock outcome instead. An empty feed says why: how many items are dismissed (D), filtered (S), held for AI decisions, excluded by a search, or in other sources/focus profiles; with nothing at all it says new messages appear as accounts sync. An email preview shows only its text body (HTML rendered to text, layout tables without borders, no blank lines or table rules; the reader keeps single paragraph breaks); the feed row already names the sender, subject and time, and the reader (`o`) adds the full From/Date header. Chat stacks preview as a timed transcript. PageUp/PageDown page the preview without changing the selection or reply target; a new selection opens at its default view. The reply box starts one line tall and grows with the draft to six lines, then scrolls. Feed headings, notices and the composer show a mail sender's display name rather than the raw `Name <address>` header. Rendering removes invisible formatting characters (soft hyphens, zero-width spaces, fillers, bidi controls) that terminals and layout width tables disagree about.
 
 Solid ● means unread; hollow ○ means read. Explicit selection/open marks read by default; because the preview shows a whole chat stack, the whole stack is marked read (an email only itself). `u` toggles the selected message. Background preview/filter changes do not mark an item read. Remote-capable messages enqueue revision-checked read changes; pending local changes survive reconnect and ignore stale acknowledgements. Until real transports exist, report local state and queued intent honestly.
 

@@ -192,7 +192,31 @@ fn layout(app: &App, messages: &[&Message], width: usize, p: Palette, limit: usi
 pub(super) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut App, hit: &mut HitAreas) {
     let visible = app.visible();
     if visible.is_empty() {
-        frame.render_widget(text("No messages match this source/focus.", p.muted), area);
+        let reasons = app.empty_reasons();
+        let mut lines = vec![Line::styled(
+            if reasons.is_empty() {
+                "Nothing here yet."
+            } else {
+                "Nothing to show:"
+            },
+            Style::default().fg(p.muted),
+        )];
+        if reasons.is_empty() {
+            lines.push(Line::styled(
+                if app.live_service {
+                    "New messages appear as connected accounts sync."
+                } else {
+                    "No messages match this source/focus."
+                },
+                Style::default().fg(p.muted),
+            ));
+        }
+        lines.extend(
+            reasons
+                .into_iter()
+                .map(|r| Line::styled(format!("· {r}"), Style::default().fg(p.fg))),
+        );
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
         return;
     }
     let width = area.width as usize;
@@ -480,5 +504,39 @@ pub(super) mod tests {
         assert!(!frame.contains("iCloud · iCloud"), "{frame}");
         app.settings.accounts[0].name = "Personal".into();
         assert!(feed(&mut app, 60, 30).contains("Apple  iCloud · Personal"));
+    }
+
+    #[test]
+    fn an_empty_feed_says_what_is_hidden_and_how_to_show_it() {
+        let mut app = app(vec![
+            message(1, Provider::ICloud, "Mira", "a", "hi"),
+            message(2, Provider::ICloud, "Shop", "b", "sale"),
+            message(3, Provider::Discord, "Son", "c", "hey"),
+        ]);
+        app.live_service = true;
+        app.session.messages[1].target.as_mut().unwrap().recipients =
+            vec!["noreply@example.invalid".into()];
+        app.session
+            .message_state
+            .entry(MessageId(1))
+            .or_default()
+            .dismissed = true;
+        app.set_source(crate::domain::SourceFilter::ICloud);
+        app.query = "invoice".into();
+        let frame = feed(&mut app, 60, 12);
+        for reason in [
+            "Nothing to show:",
+            "1 dismissed · D shows them",
+            "1 filtered · S shows them",
+            "searching \"invoice\"",
+            "1 in other sources or focus profiles",
+        ] {
+            assert!(frame.contains(reason), "{reason}: {frame}");
+        }
+        let mut empty = super::tests::app(vec![]);
+        empty.live_service = true;
+        let frame = feed(&mut empty, 60, 6);
+        assert!(frame.contains("Nothing here yet."), "{frame}");
+        assert!(frame.contains("as connected accounts sync"), "{frame}");
     }
 }

@@ -63,7 +63,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         Constraint::Min(3),
         Constraint::Length(preview_height),
         Constraint::Length(composer_height),
-        Constraint::Length(2),
+        Constraint::Length(1),
     ])
     .split(area);
     let header = Line::from(vec![
@@ -284,17 +284,22 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
     let mut hints: Vec<&str> = if app.live_feed {
         vec!["v open Discord", "Del/^E dismiss", "? help"]
     } else {
-        vec![
-            if app.live_service {
-                "F5 SEND"
+        let typing = app.mode == Mode::Insert;
+        let mut hints = vec![match (typing, app.live_service) {
+            (true, true) => "⏎ SEND",
+            (true, false) => "⏎ mock send",
+            (false, true) => "F5 SEND",
+            (false, false) => "F5 mock send",
+        }];
+        if typing {
+            hints.push(if app.modified_keys {
+                "⇧⏎ newline"
             } else {
-                "F5 mock send"
-            },
-            "Del dismiss",
-            "↑↓ reply",
-            "PgUp/Dn preview",
-            "? help",
-        ]
+                "^J newline"
+            });
+        }
+        hints.extend(["Del dismiss", "↑↓ reply", "PgUp/Dn preview", "? help"]);
+        hints
     };
     let footer = |hints: &[&str]| format!("{mode} · {}", hints.join(" · "));
     while hints.len() > 2
@@ -306,48 +311,17 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         text(footer(&hints), p.muted),
         Rect::new(composer.x, composer.bottom() - 1, composer.width, 1),
     );
-    let outcome = match app.next_outcome {
-        MockOutcome::Success => "success",
-        MockOutcome::Failure => "failure",
-        MockOutcome::Uncertain => "uncertain",
+    // One bottom line: a fresh notice, otherwise compact status icons.
+    let bottom = if app.notice.is_empty() {
+        status_bar(app, parts[4].width as usize, p)
+    } else {
+        // `preview` keeps it to one line with an ellipsis when cut.
+        Line::styled(
+            preview(&app.notice, parts[4].width as usize + 2),
+            Style::default().fg(p.warning),
+        )
     };
-    frame.render_widget(
-        text(
-            format!(
-                "{} · {} new · {}",
-                if app.focused {
-                    "active"
-                } else {
-                    "inactive (simulated/focus)"
-                },
-                app.new_items,
-                if app.live_feed {
-                    if app.bridge_ready {
-                        "capture ready"
-                    } else {
-                        "capture unavailable / starting"
-                    }
-                } else if app.live_service {
-                    app.provider_status
-                        .values()
-                        .next()
-                        .map(String::as_str)
-                        .unwrap_or("Waiting for enabled accounts")
-                } else {
-                    outcome
-                }
-            ),
-            p.muted,
-        ),
-        Rect {
-            height: 1,
-            ..parts[4]
-        },
-    );
-    frame.render_widget(
-        text(safe_text(&app.notice), p.warning),
-        Rect::new(parts[4].x, parts[4].y + 1, parts[4].width, 1),
-    );
+    frame.render_widget(Paragraph::new(bottom), parts[4]);
 
     match app.mode {
         Mode::Help => overlay(
@@ -381,7 +355,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         Mode::Command => commands::draw(frame, area, p, app),
         Mode::Search => {
             let line = format!("/{}", app.command.text);
-            let area = Rect::new(parts[4].x, parts[4].y + 1, parts[4].width, 1);
+            let area = parts[4];
             frame.render_widget(Clear, area);
             frame.render_widget(
                 text(line, p.accent).style(Style::default().fg(p.accent).bg(p.surface)),
@@ -404,6 +378,72 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         _ => {}
     }
     hit
+}
+
+/// Connection dots per enabled account (named when they fit), arrivals since the drawer was
+/// last read, and the demo's next mock outcome.
+fn status_bar(app: &App, width: usize, p: Palette) -> Line<'static> {
+    use super::settings::status::{health, health_style};
+    let mut spans = vec![];
+    if app.new_items > 0 {
+        spans.push(Span::styled(
+            format!("↓{} new  ", app.new_items),
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if app.live_feed {
+        let (dot, color, label) = if app.bridge_ready {
+            ("●", p.success, "capture")
+        } else {
+            ("!", p.warning, "capture unavailable")
+        };
+        spans.push(Span::styled(format!("{dot} "), Style::default().fg(color)));
+        spans.push(Span::styled(label, Style::default().fg(p.muted)));
+        return Line::from(spans);
+    }
+    if !app.live_service {
+        let outcome = match app.next_outcome {
+            MockOutcome::Success => "success",
+            MockOutcome::Failure => "failure",
+            MockOutcome::Uncertain => "uncertain",
+        };
+        spans.push(Span::styled(
+            format!("demo · next send {outcome} (F7)"),
+            Style::default().fg(p.muted),
+        ));
+        return Line::from(spans);
+    }
+    let accounts: Vec<_> = app
+        .settings
+        .accounts
+        .iter()
+        .filter(|a| a.enabled)
+        .map(|a| {
+            let (dot, color) = health_style(health(app, a).0, p);
+            (dot, color, crate::domain::display_name(a.label()))
+        })
+        .collect();
+    if accounts.is_empty() {
+        spans.push(Span::styled(
+            "○ no accounts connected · , settings",
+            Style::default().fg(p.muted),
+        ));
+        return Line::from(spans);
+    }
+    let used: usize = spans.iter().map(|s| s.width()).sum();
+    let named: usize = accounts
+        .iter()
+        .map(|(_, _, name)| 3 + unicode_width::UnicodeWidthStr::width(name.as_str()))
+        .sum();
+    for (dot, color, name) in accounts {
+        spans.push(Span::styled(dot, Style::default().fg(color)));
+        spans.push(if used + named <= width {
+            Span::styled(format!(" {name}  "), Style::default().fg(p.muted))
+        } else {
+            Span::raw(" ")
+        });
+    }
+    Line::from(spans)
 }
 
 /// Who a reply goes to, in human terms: the person being answered, plus mail addresses.
@@ -506,7 +546,7 @@ mod tests {
         assert_eq!(app.next_outcome, outcome);
         let frame = snapshot(&mut app, 100, 40).unwrap();
         assert!(frame.contains("LIVE"));
-        assert!(frame.contains("F5 SEND"));
+        assert!(frame.contains("⏎ SEND"));
         assert!(!frame.contains("SERVICE DEMO"));
         let account = app
             .session
@@ -634,5 +674,78 @@ mod tests {
             !frame.contains("Apple <hello@example.invalid> <"),
             "{frame}"
         );
+    }
+
+    #[test]
+    fn one_bottom_line_shows_a_fresh_notice_then_compact_account_status() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.live_service = true;
+        for (id, provider, status) in [
+            ("icloud", Provider::ICloud, "Connected · 3 new"),
+            ("work", Provider::Office365, "Connecting…"),
+            ("chat", Provider::Discord, "Sync failed: offline"),
+        ] {
+            let mut account = crate::policy::AccountConfig::new(id, provider);
+            account.enabled = true;
+            app.settings.accounts.push(account);
+            app.provider_status.insert(id.into(), status.into());
+        }
+        app.notice = "Reply ready".into();
+        let last = |app: &mut App, width| {
+            snapshot(app, width, 40)
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(last(&mut app, 100), "Reply ready");
+        // The notice clears itself after a few seconds; status icons take the line.
+        assert!(!app.expire_notice());
+        app.notice_since = Some((
+            app.notice.clone(),
+            std::time::Instant::now() - Duration::from_secs(9),
+        ));
+        assert!(app.expire_notice());
+        assert!(app.notice.is_empty());
+        app.new_items = 2;
+        let wide = last(&mut app, 100);
+        assert!(
+            wide.starts_with("↓2 new  ● icloud  ◌ work  ! chat"),
+            "{wide}"
+        );
+        assert!(!wide.contains("active"), "{wide}");
+        // Too narrow for names: dots only, still in their colours.
+        let narrow = last(&mut app, 30);
+        assert_eq!(narrow.trim_end(), "↓2 new  ● ◌ !", "{narrow}");
+        let frame = snapshot(&mut app, 100, 40).unwrap();
+        assert!(!frame.contains("inactive"), "{frame}");
+    }
+
+    #[test]
+    fn the_preview_rule_takes_the_source_colour_and_hides_without_a_selection() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        let p = palette(Theme::Midnight, Duration::ZERO, false);
+        let rule_row = |app: &mut App| {
+            let backend = ratatui::backend::TestBackend::new(60, 40);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    draw(frame, app, Duration::ZERO);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..40u16)
+                .find(|&y| (0..60u16).all(|x| buffer[(x, y)].symbol() == "·"))
+                .map(|y| (buffer[(0, y)].fg, buffer[(59, y)].fg))
+        };
+        let message = app.selected_message().cloned().unwrap();
+        let source = provider_color(message.provider(), p.accent);
+        let (left, right) = rule_row(&mut app).expect("rule under the feed");
+        assert_ne!(left, right, "the rule fades across the width");
+        assert_ne!(left, source);
+        assert_ne!(left, p.muted);
+        app.selected = None;
+        assert!(rule_row(&mut app).is_none(), "no selection, no rule");
     }
 }
