@@ -22,6 +22,19 @@ pub(super) fn overlay(
     body: &str,
     scroll: u16,
 ) {
+    let body = text(safe_text(body), p.fg).wrap(Wrap { trim: false });
+    overlay_with(frame, area, p, title, body, scroll);
+}
+
+/// An overlay around an already laid-out body.
+pub(super) fn overlay_with(
+    frame: &mut Frame,
+    area: Rect,
+    p: Palette,
+    title: &str,
+    body: Paragraph<'_>,
+    scroll: u16,
+) {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Block::default()
@@ -44,14 +57,16 @@ pub(super) fn overlay(
             .style(Style::default().fg(p.accent).add_modifier(Modifier::BOLD)),
         parts[0],
     );
+    frame.render_widget(body.scroll((scroll, 0)), parts[1]);
     frame.render_widget(
-        text(safe_text(body), p.fg)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
-        parts[1],
-    );
-    frame.render_widget(
-        text("Esc close · arrows / PageUp / PageDown scroll", p.muted),
+        text(
+            if parts[2].width >= 46 {
+                "Esc close · arrows / PageUp / PageDown scroll"
+            } else {
+                "Esc close · ↑↓ PgUp/Dn scroll"
+            },
+            p.muted,
+        ),
         parts[2],
     );
 }

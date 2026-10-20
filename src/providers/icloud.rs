@@ -68,9 +68,12 @@ pub fn parse(
     let reply = header("Reply-To");
     let from = header("From");
     let recipients = addresses(if reply.is_empty() { &from } else { &reply });
-    let mut rendered = body(&mail, "text/plain")
-        .map(|s| text(&s))
-        .or_else(|| body(&mail, "text/html").map(|s| html(&s)))
+    // HTML first, as mail clients show it: senders often generate the plain part from their
+    // HTML and leave its CSS in, while rendering drops <style>, <head> and scripts.
+    let mut rendered = body(&mail, "text/html")
+        .map(|s| html(&s))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| body(&mail, "text/plain").map(|s| text(&s)))
         .unwrap_or_else(|| "[No supported text body]".into());
     let attachments: Vec<_> = mail
         .subparts
@@ -622,14 +625,25 @@ mod tests {
         assert!(!human.automated);
     }
     #[test]
+    fn plain_text_is_used_when_the_html_part_renders_nothing() {
+        let raw = b"From: Sender <sender@example.invalid>\r\nSubject: Plain\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=b\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<head><style>p { color: red; }</style></head>\r\n--b\r\nContent-Type: text/plain\r\n\r\nOnly the plain part has words\r\n--b--\r\n";
+        let item = parse(&account(), "INBOX", 7, 5, true, raw).unwrap();
+        assert!(
+            item.body.contains("Only the plain part has words"),
+            "{}",
+            item.body
+        );
+    }
+    #[test]
     fn mime_decodes_alternatives_reply_to_unicode_and_removes_terminal_sequences() {
-        let raw=b"From: Sender <sender@example.invalid>\r\nReply-To: Replies <reply@example.invalid>\r\nSubject: =?UTF-8?Q?Caf=C3=A9?=\r\nMessage-ID: <original@example.invalid>\r\nReferences: <earlier@example.invalid>\r\nDate: Sun, 18 Oct 2026 10:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n--inner\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>HTML fallback</p>\r\n--inner\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nPlain caf=C3=A9 =1B[31mtext\r\n--inner--\r\n--outer\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=fiction.pdf\r\n\r\nfictional bytes\r\n--outer--\r\n";
+        let raw=b"From: Sender <sender@example.invalid>\r\nReply-To: Replies <reply@example.invalid>\r\nSubject: =?UTF-8?Q?Caf=C3=A9?=\r\nMessage-ID: <original@example.invalid>\r\nReferences: <earlier@example.invalid>\r\nDate: Sun, 18 Oct 2026 10:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n--inner\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<head><style>td { mso-table-lspace: 0; }</style></head><p>HTML caf=C3=A9 =1B[31mtext</p>\r\n--inner\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nGenerated td { mso-table-lspace: 0; } text\r\n--inner--\r\n--outer\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=fiction.pdf\r\n\r\nfictional bytes\r\n--outer--\r\n";
         let a = account();
         let item = parse(&a, "INBOX", 7, 4, true, raw).unwrap();
         assert_eq!(item.subject, "Café");
         assert_eq!(item.recipients, vec!["reply@example.invalid"]);
-        assert!(item.body.contains("Plain café text"));
-        assert!(!item.body.contains("HTML fallback"));
+        // The HTML part wins over a generated plain part that kept the sender's CSS.
+        assert!(item.body.contains("HTML café text"), "{}", item.body);
+        assert!(!item.body.contains("mso-table") && !item.body.contains("Generated"));
         assert!(item.body.contains("fiction.pdf"));
         let draft = crate::composer::Draft {
             target: item.message(MessageId(1), &a).target.unwrap(),

@@ -111,11 +111,12 @@ pub fn text(value: &str) -> String {
 }
 pub fn html(value: &str) -> String {
     // No resource fetching: links and images are rendered as text. Raw mode reads table cells
-    // in order without borders, since most mail uses tables for layout, not data.
+    // in order without borders, since most mail uses tables for layout, not data. Terminal
+    // sequences go first: the renderer drops a bare ESC but would keep the rest as text.
     text(
         &html2text::config::plain()
             .raw_mode(true)
-            .string_from_read(value.as_bytes(), 100)
+            .string_from_read(safe_text(value).as_bytes(), 100)
             .unwrap_or_else(|_| "[Unable to render HTML]".into()),
     )
 }

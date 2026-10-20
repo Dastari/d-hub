@@ -71,6 +71,28 @@ fn multiline_movement_and_viewport_use_display_widths() {
 }
 
 #[test]
+fn long_replies_wrap_at_words_and_alt_arrows_move_between_wrapped_rows() {
+    let mut editor = Editor::new("one two three four five");
+    // Ten columns wrap at nine, leaving room for the cursor at a row's end.
+    let (rows, cursor) = editor.wrapped(10, 5);
+    assert_eq!(rows, ["one two ", "three ", "four five"]);
+    assert_eq!(cursor, (2, 9));
+    editor.key(key(KeyCode::Up));
+    assert_eq!(&editor.text[editor.cursor..], " four five");
+    editor.key(key(KeyCode::Up));
+    assert_eq!(&editor.text[editor.cursor..], "wo three four five");
+    let (_, cursor) = editor.wrapped(10, 1);
+    assert_eq!(cursor, (0, 5), "scrolled to the cursor's row");
+    assert_eq!(editor.top, 0);
+    editor.key(key(KeyCode::Down));
+    editor.key(key(KeyCode::Down));
+    let (rows, cursor) = editor.wrapped(10, 1);
+    assert_eq!((rows, cursor), (vec!["four five"], (0, 5)));
+    let mut word = Editor::new("abcdefghijkl");
+    assert_eq!(word.wrapped(5, 5).0, ["abcd", "efgh", "ijkl"]);
+}
+
+#[test]
 fn terminal_sequences_are_stripped_before_rendering_or_insertion() {
     let untrusted = "ok\x1b[2J\x1b]52;c;Y2xpcGJvYXJk\x07\x00\x08\x1b[31mred\x1b[0m\r\nnext";
     assert_eq!(safe_text(untrusted), "okred\nnext");

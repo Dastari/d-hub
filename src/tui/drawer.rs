@@ -50,7 +50,11 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         .draft
         .as_ref()
         .is_some_and(|d| !d.attachments.is_empty());
-    let draft_lines = app.editor.text.split('\n').count().clamp(1, 6) as u16;
+    let draft_lines = app
+        .editor
+        .wrapped_rows(padded(area).width as usize)
+        .len()
+        .clamp(1, 6) as u16;
     let composer_height = 3 + u16::from(attachments) + draft_lines;
     // A dotted rule, then room for a short chat burst or an email's opening lines.
     let preview_height = 1 + if area.height >= 28 {
@@ -168,6 +172,17 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
             SendState::Submitting(_) => "… ",
             SendState::Uncertain(_) => "? ",
             SendState::Failed(_) => "! ",
+            SendState::Ready
+                if locked
+                    && app
+                        .session
+                        .composer
+                        .draft
+                        .as_ref()
+                        .is_some_and(|d| d.is_empty()) =>
+            {
+                "◆ empty · "
+            }
             _ if locked => "◆ ",
             _ => "↳ ",
         }
@@ -247,10 +262,11 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
         composer.bottom().saturating_sub(edit_top + 1),
     );
     if edit_area.height > 0 {
-        let (row, col) = app
+        let (rows, (row, col)) = app
             .editor
-            .viewport(edit_area.width as usize, edit_area.height as usize);
-        if app.editor.text.is_empty() {
+            .wrapped(edit_area.width as usize, edit_area.height as usize);
+        let rows = rows.join("\n");
+        if rows.is_empty() {
             frame.render_widget(
                 text(
                     if app.live_feed {
@@ -263,11 +279,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
                 edit_area,
             );
         } else {
-            frame.render_widget(
-                text(app.editor.text.clone(), p.fg)
-                    .scroll((app.editor.top as u16, app.editor.left as u16)),
-                edit_area,
-            );
+            frame.render_widget(text(rows, p.fg), edit_area);
         }
         if app.mode == Mode::Insert && app.session.composer.editable() {
             frame.set_cursor_position((edit_area.x + col, edit_area.y + row));
@@ -324,16 +336,16 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App, elapsed: Duration) -> HitAr
     frame.render_widget(Paragraph::new(bottom), parts[4]);
 
     match app.mode {
-        Mode::Help => overlay(
+        Mode::Help => overlay_with(
             frame,
             area,
             p,
             if app.live_service {
                 "Controls · LIVE sends"
             } else {
-                "Controls · all sends simulated"
+                "Controls · sends simulated"
             },
-            HELP,
+            Paragraph::new(help::lines(app, area.width.saturating_sub(4) as usize, p)),
             app.reader_scroll,
         ),
         Mode::Discard => overlay(
@@ -642,6 +654,22 @@ mod tests {
             frame.contains("line 9") && !frame.contains("line 3"),
             "{frame}"
         );
+    }
+
+    #[test]
+    fn a_long_reply_wraps_in_the_reply_box_instead_of_scrolling_sideways() {
+        let mut app = App::new(Session::default(), Settings::default()).unwrap();
+        app.mode = Mode::Insert;
+        app.editor
+            .insert("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo");
+        app.update_body();
+        let frame = snapshot(&mut app, 30, 40).unwrap();
+        assert!(frame.contains("alpha bravo"), "{frame}");
+        assert!(frame.contains("juliet kilo"), "{frame}");
+        let lines: Vec<_> = frame.lines().collect();
+        let first = lines.iter().position(|l| l.contains("alpha")).unwrap();
+        let last = lines.iter().position(|l| l.contains("kilo")).unwrap();
+        assert!(last > first, "{frame}");
     }
 
     #[test]

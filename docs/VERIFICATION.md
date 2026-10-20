@@ -369,3 +369,35 @@ All 207 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts 
 ## v0.4.9 publication
 
 [v0.4.9](https://github.com/dastari/d-hub/releases/tag/v0.4.9) is published (preview links as text or host; click to open). The [release jobs and publication](https://github.com/Dastari/d-hub/actions/runs/39340531773) and [main CI](https://github.com/Dastari/d-hub/actions/runs/39340532247) passed. Locally, all 207 Rust tests, formatting, warnings-denied Clippy and the four PTY scripts passed before tagging. The public installer, run in a temporary HOME, installed the x86_64 asset reporting d-hub 0.4.9, and the startup/account-setup PTY passed against that binary. Temporary data was removed; no owner account or keyring was accessed.
+
+## Reply target follows explicit filter changes
+
+Owner report (v0.4.9): with every message dismissed, the narrow drawer still showed "◆ iCloud" and a JB Hi-Fi recipient. "◆" is the narrow form of LOCKED. A draft emptied of text was still locked, per C06, so dismissal and filter changes kept it.
+- **Releasing an emptied draft:** explicit filter changes release it, like Delete and save-and-switch already did. These are dismissing, D, S, focus, source and settings edits, and the owner applies them in the same way. Background arrivals and decision results still never release or move it.
+- **Rebinding the reply:** after an explicit filter change in reply-first mode, an empty composer replies to the selected visible message, or to nothing when the feed is empty. Showing dismissed messages binds the reply to the visible selection.
+- **Dismissing an emptied reply's message** is no longer refused as a "reply in progress".
+- **Narrow drawers** show "◆ empty" for an emptied lock.
+
+A composer test drives a drawer whose actions are replayed through `service::apply` on a separate owner, checking that both keep the same composer and selection at each step:
+- emptying keeps the lock, and an arrival keeps it;
+- dismissing every message releases it and leaves no recipient;
+- showing dismissed binds the reply to the selected message;
+- a draft with text survives the toggles unchanged.
+
+## Help for narrow drawers
+
+Owner report: in the narrow drawer, help descriptions wrapped back to the left edge, under the keys. Help is now structured rows laid out for the width: an aligned key column when there is room, otherwise the key on its own line with the description indented. Live help leaves out demo-only controls, demo help leaves out live-only commands, and the overlay footer shortens when narrow. Tests render 80 and 30 cells, checking each layout and that no line exceeds the width, and check live versus demo content.
+
+## Reply box wrapping
+
+- **Wrapping.** Typing in the reply box wraps at words instead of scrolling sideways (reported by the owner). The editor and settings prompts share one soft-wrap: a space that would overflow ends its row, a word longer than the row breaks mid-word, and one column stays free so the cursor never sits past the edge. The box height counts wrapped rows (up to six). Alt+Up/Down move between wrapped rows by display column.
+- **Checks.** `long_replies_wrap_at_words_and_alt_arrows_move_between_wrapped_rows` (rows, cursor, scrolling, Alt+Up/Down, long words) and `a_long_reply_wraps_in_the_reply_box_instead_of_scrolling_sideways` (30-column drawer render). The settings `soft_rows` test now expects "aaa bbb " on the first row, since the overflowing space hangs.
+- **Reply target tests updated.** `focus_change_drops_a_hidden_empty_target_for_the_selected_visible_message` and `inactive_empty_composer_follows_only_the_selected_source_and_focus` now expect an explicit focus or source change to bind the empty reply to the highlighted visible message, instead of leaving no target.
+- **Run.** `cargo fmt`, `cargo clippy --offline --all-targets -- -D warnings`, `cargo test --offline` and all four PTY smokes (terminal, service, startup, update) passed at low priority. Not checked on the owner's terminals: Ghostty or Windows Terminal rendering of wrapped rows.
+
+## Email previews without CSS
+
+- **Cause.** iCloud mail preferred the text/plain part. Some senders (ClearScore, reported by the owner) generate that part from their HTML and leave the CSS in, so the preview showed `table, td { mso-table-lspace: 0; … }`. Office 365 already rendered the HTML body.
+- **Fix.** iCloud now renders the HTML part, which drops `<head>`, `<style>` and scripts. It falls back to the plain part when there is no HTML or the HTML renders blank. Terminal sequences are stripped before HTML rendering, because html2text dropped a bare ESC but kept `[31m` as text.
+- **Checks.** `mime_decodes_alternatives_reply_to_unicode_and_removes_terminal_sequences` now pairs QP-encoded HTML with a style sheet and an escape against a plain part that contains CSS. It asserts the HTML text, no CSS and no escape remnant. `plain_text_is_used_when_the_html_part_renders_nothing` covers the fallback. `cargo test --offline` and clippy passed.
+- **Not changed.** Cached messages keep the body rendered when they were fetched, so mail already in the feed still shows its CSS. Only newly fetched mail uses the HTML part. Not checked against the real ClearScore message.

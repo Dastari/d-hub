@@ -3,7 +3,9 @@ use super::*;
 
 pub(super) fn scroll(app: &mut App, down: bool, amount: u16) {
     let limit = if app.mode == Mode::Help {
-        HELP.lines().count() * 4
+        // Generous: the narrowest layout has the most lines.
+        let p = palette(app.settings.theme, Duration::ZERO, true);
+        help::lines(app, 24, p).len()
     } else {
         preview::reader(app).map_or(0, |(_, body)| body.chars().count())
     };

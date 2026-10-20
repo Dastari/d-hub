@@ -310,7 +310,7 @@ pub(in crate::tui) fn draw(frame: &mut Frame, area: Rect, p: Palette, app: &mut 
                 slot = Some((start, name_width as u16 + 4, value_width as u16, 1));
             } else {
                 let height = if tall {
-                    (soft_rows(&app.command.text, width.saturating_sub(4)).len() + 1)
+                    (app.command.wrapped_rows(width.saturating_sub(4)).len() + 1)
                         .clamp(3, (viewport.height as usize).saturating_sub(4).max(3))
                 } else {
                     1
@@ -430,28 +430,10 @@ fn draw_editor(frame: &mut Frame, field: Rect, p: Palette, app: &mut App, kind: 
     let style = Style::default().fg(p.fg).bg(p.surface);
     let (content, scroll, cursor) = if kind == (Inline::Text { multiline: true }) {
         // Prompts wrap at words like the rest of the page; the cursor follows the wrapped rows.
-        let text = &app.command.text;
-        let rows = soft_rows(text, field.width as usize);
-        let cursor = app.command.cursor;
-        let row = rows.iter().rposition(|(s, _)| *s <= cursor).unwrap_or(0);
-        let column = text[rows[row].0..cursor].width();
-        let height = field.height as usize;
-        app.command.top = app
+        let (rows, cursor) = app
             .command
-            .top
-            .min(row)
-            .max((row + 1).saturating_sub(height));
-        let content = rows
-            .iter()
-            .map(|(s, e)| &text[*s..*e])
-            .collect::<Vec<_>>()
-            .join("\n");
-        let visible = (row - app.command.top) as u16;
-        (
-            content,
-            (app.command.top as u16, 0),
-            (visible, column as u16),
-        )
+            .wrapped(field.width as usize, field.height as usize);
+        (rows.join("\n"), (0, 0), cursor)
     } else if kind == Inline::Secret {
         // Only the length is shown; the cursor column counts mask characters.
         let column = app.command.text[..app.command.cursor].chars().count();
@@ -470,33 +452,4 @@ fn draw_editor(frame: &mut Frame, field: Rect, p: Palette, app: &mut App, kind: 
     };
     frame.render_widget(Paragraph::new(content).style(style).scroll(scroll), field);
     frame.set_cursor_position((field.x + cursor.1, field.y + cursor.0));
-}
-
-/// Byte ranges of each visual row when `text` wraps at `width` columns, breaking after spaces
-/// where possible. Hard newlines always start a row.
-pub(super) fn soft_rows(text: &str, width: usize) -> Vec<(usize, usize)> {
-    use unicode_segmentation::UnicodeSegmentation;
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    let mut offset = 0;
-    for line in text.split('\n') {
-        let (mut start, mut used, mut space) = (0, 0, None);
-        for (i, grapheme) in line.grapheme_indices(true) {
-            let w = grapheme.width();
-            if used + w > width && i > start {
-                let cut = space.filter(|s| *s > start).unwrap_or(i);
-                rows.push((offset + start, offset + cut));
-                used = line[cut..i].width();
-                start = cut;
-                space = None;
-            }
-            used += w;
-            if grapheme == " " {
-                space = Some(i + 1);
-            }
-        }
-        rows.push((offset + start, offset + line.len()));
-        offset += line.len() + 1;
-    }
-    rows
 }

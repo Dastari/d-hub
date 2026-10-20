@@ -11,7 +11,7 @@ These scenarios define observable outcomes. Automated tests should use determini
 | C03 | Empty composer; select B with j/k, arrows or click | Header/target becomes B consistently |
 | C04 | Type in A, then select B, change focus profile and receive C | Draft remains targeted to A with original account/recipients; viewed item may change |
 | C05 | Attach a file to A with no body, then receive B | A stays locked |
-| C06 | Delete all body/attachments from a locked draft | Target stays locked until explicit release/discard |
+| C06 | Delete all body/attachments from a locked draft | Target stays locked until explicit release/discard (Delete, save-and-switch or an explicit filter change); background events keep it |
 | C07 | Send A succeeds; B is newest; drawer then loses focus | Submitted draft clears; empty composer follows B; next focus is ready to type |
 | C08 | Send fails, account disconnects, or referenced item disappears | Body/attachments remain; error prevents accidental send to another target |
 | C09 | Open/scroll/search/close full preview while drafting | Draft content, target and revision remain intact |

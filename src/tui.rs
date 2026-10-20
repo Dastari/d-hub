@@ -27,10 +27,9 @@ use self::{
     discord_qr::{discord_setup_key, draw_discord_qr, new_discord_setup, poll_discord_setup},
     drawer::draw,
     event_loop::TerminalGuard,
-    help::HELP,
     input::{key, mouse},
     theme::{Palette, SPINNER, palette, provider_color, source_color, source_selection},
-    widgets::{overlay, padded, preview, text, wrapped},
+    widgets::{overlay, overlay_with, padded, preview, text, wrapped},
 };
 
 use crate::{

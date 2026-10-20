@@ -65,7 +65,11 @@ fn source_changes_and_arrivals_preserve_drafts_and_submitted_revisions() {
 fn inactive_empty_composer_follows_only_the_selected_source_and_focus() {
     let mut app = app();
     app.set_source(SourceFilter::Discord);
-    assert!(app.session.composer.reply_target().is_none());
+    // While active, the empty reply follows the highlighted Discord message, not the hidden one.
+    let selected = app.selected_message().unwrap();
+    assert!(app.visible().iter().any(|m| m.id == selected.id));
+    let selected = selected.target.clone();
+    assert_eq!(app.session.composer.reply_target(), selected.as_ref());
     app.focus(false);
     assert_eq!(
         app.session.composer.reply_target().unwrap().incoming,

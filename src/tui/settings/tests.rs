@@ -621,12 +621,12 @@ fn credentials_typed_from_settings_are_masked_in_their_row() {
 #[test]
 fn soft_rows_break_at_spaces_and_split_long_words() {
     let text = "aaa bbb ccc\nabcdefghij";
-    let rows: Vec<&str> = render::soft_rows(text, 7)
+    let rows: Vec<&str> = crate::editor::soft_rows(text, 7)
         .into_iter()
         .map(|(s, e)| &text[s..e])
         .collect();
-    assert_eq!(rows, ["aaa ", "bbb ccc", "abcdefg", "hij"]);
-    assert_eq!(render::soft_rows("", 5), [(0, 0)]);
+    assert_eq!(rows, ["aaa bbb ", "ccc", "abcdefg", "hij"]);
+    assert_eq!(crate::editor::soft_rows("", 5), [(0, 0)]);
 }
 
 #[test]

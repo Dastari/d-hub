@@ -378,7 +378,7 @@ impl App {
             before,
             settings: self.settings.clone(),
         });
-        self.reconcile_filters();
+        self.refresh_filters();
         let name = crate::domain::safe_text(self.settings.profile_label());
         self.notice = if id == "all" {
             "No focus · everything shows, filtered messages labelled · f picks a focus.".into()
@@ -398,14 +398,16 @@ impl App {
             before,
             settings: self.settings.clone(),
         });
-        self.reconcile_filters();
+        self.refresh_filters();
         self.notice = format!(
             "Source: {} · Left/Right cycles sources; f changes focus.",
             source.label()
         );
     }
 
-    fn reconcile_filters(&mut self) {
+    /// Keeps selection and an empty composer consistent with the feed after any change,
+    /// including background ones; never touches a draft with content.
+    pub(crate) fn reconcile_filters(&mut self) {
         self.feed_offset = 0;
         if !self.focused {
             self.follow_latest();
@@ -940,8 +942,10 @@ impl App {
             .map(|m| m.id)
             .filter(|id| self.dismissed(*id) != dismissed)
             .collect();
+        // Only a reply with content blocks dismissal; an emptied one is released below.
         if dismissed
             && let Some(draft) = &self.session.composer.draft
+            && !draft.is_empty()
             && ids.contains(&draft.target.incoming)
         {
             self.notice =
@@ -965,7 +969,7 @@ impl App {
             self.record(crate::service::Action::Dismiss { id, dismissed });
             self.session.message_state.entry(id).or_default().dismissed = dismissed;
         }
-        self.reconcile_filters();
+        self.refresh_filters();
         if let Some(next) = next {
             if self.settings.reply_first
                 && self.mode == Mode::Insert
@@ -989,7 +993,7 @@ impl App {
 
     pub fn toggle_show_dismissed(&mut self) {
         self.settings.show_dismissed = !self.settings.show_dismissed;
-        self.reconcile_filters();
+        self.refresh_filters();
         self.notice = if self.settings.show_dismissed {
             "Dismissed messages included · e restores the selected item."
         } else {
@@ -998,8 +1002,35 @@ impl App {
         .into();
     }
 
+    /// After an explicit filter change (source, focus, dismissal, D, S, settings): reconcile,
+    /// then in reply-first mode an empty composer replies to the selected visible message, or
+    /// to nothing when the feed is empty. Background changes use `reconcile_filters` alone.
     pub fn refresh_filters(&mut self) {
+        // An explicit filter change releases a draft emptied of text and attachments, as
+        // Delete and save-and-switch do; background changes never release one.
+        if self.session.composer.editable()
+            && self
+                .session
+                .composer
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.is_empty())
+        {
+            self.session.composer.draft = None;
+            self.sync_editor();
+        }
         self.reconcile_filters();
+        if self.settings.reply_first
+            && self.session.composer.draft.is_none()
+            && self.session.composer.editable()
+        {
+            let target = self
+                .selected
+                .filter(|id| self.visible().iter().any(|m| m.id == *id))
+                .and_then(|id| self.session.messages.iter().find(|m| m.id == id))
+                .and_then(|m| m.target.clone());
+            self.session.composer.apply(Event::Select(target));
+        }
     }
 
     pub fn accepted(&mut self, operation: u64) {

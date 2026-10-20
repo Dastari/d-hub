@@ -585,7 +585,8 @@ impl Owner {
         if !staged.focused {
             staged.follow_latest();
         }
-        staged.refresh_filters();
+        // Arrivals are background: they never move an empty composer the reader is using.
+        staged.reconcile_filters();
         if staged.focused
             && let Some(anchor) = anchor
             && let Some(index) = staged.visible().iter().position(|m| m.id == anchor)

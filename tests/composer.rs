@@ -218,10 +218,15 @@ fn no_eligible_message_means_no_hidden_recipient() {
 }
 
 #[test]
-fn focus_change_clears_a_hidden_empty_target_without_redirecting() {
+fn focus_change_drops_a_hidden_empty_target_for_the_selected_visible_message() {
     let mut app = app();
+    let hidden = app.session.composer.reply_target().unwrap().incoming;
     app.set_focus(Focus::Work);
-    assert!(app.session.composer.reply_target().is_none());
+    assert!(app.visible().iter().all(|m| m.id != hidden));
+    // The empty reply follows the highlighted message, never one the focus hides.
+    let selected = app.selected_message().and_then(|m| m.target.as_ref());
+    assert!(selected.is_some());
+    assert_eq!(app.session.composer.reply_target(), selected);
     app.focus(false);
     assert_eq!(
         app.session.composer.reply_target().unwrap().incoming,
@@ -381,4 +386,71 @@ fn edits_and_target_selection_interleave_without_redirecting() {
             assert_eq!(composer.reply_target(), initial.as_ref());
         }
     }
+}
+
+/// Applies the drawer's recorded actions to an owner, as the service does, and checks both
+/// arrive at the same composer. Settings changes travel as Configure, as the IPC link sends them.
+fn replay(client: &mut App, owner: &mut App, before: &Settings) {
+    for action in std::mem::take(&mut client.actions) {
+        d_hub::service::apply(owner, &action).unwrap();
+    }
+    if &client.settings != before {
+        d_hub::service::apply(
+            owner,
+            &d_hub::service::Action::Configure {
+                before: before.clone(),
+                settings: client.settings.clone(),
+            },
+        )
+        .unwrap();
+    }
+    assert_eq!(owner.session.composer, client.session.composer);
+    assert_eq!(owner.selected, client.selected);
+}
+
+#[test]
+fn explicit_filter_changes_release_an_emptied_draft_and_follow_what_is_shown() {
+    let mut client = app();
+    let mut owner = app();
+    client.shared = true;
+    write(&mut client, "x");
+    client.editor = d_hub::editor::Editor::default();
+    client.update_body();
+    let before = client.settings.clone();
+    replay(&mut client, &mut owner, &before);
+    let emptied = client.session.composer.draft.clone();
+    assert!(
+        emptied.as_ref().is_some_and(|d| d.is_empty()),
+        "emptying keeps the lock"
+    );
+    // Background arrivals never release it.
+    client.arrive();
+    replay(&mut client, &mut owner, &before);
+    assert_eq!(client.session.composer.draft, emptied);
+    // Dismissing everything (explicitly) releases it and leaves no hidden recipient.
+    while let Some(id) = client.visible().first().map(|m| m.id) {
+        client.selected = Some(id);
+        owner.selected = Some(id);
+        client.toggle_dismissed();
+        replay(&mut client, &mut owner, &before);
+    }
+    assert!(client.session.composer.draft.is_none());
+    assert!(client.session.composer.reply_target().is_none());
+    // Showing dismissed replies to the selected visible message, not an old one.
+    let before = client.settings.clone();
+    client.toggle_show_dismissed();
+    replay(&mut client, &mut owner, &before);
+    let selected = client.selected_message().unwrap();
+    assert_eq!(
+        client.session.composer.reply_target(),
+        selected.target.as_ref()
+    );
+    // A draft with content is never released or moved by filter changes.
+    write(&mut client, "keep this");
+    let draft = client.session.composer.draft.clone();
+    let before = client.settings.clone();
+    replay(&mut client, &mut owner, &before);
+    client.toggle_show_dismissed();
+    replay(&mut client, &mut owner, &before);
+    assert_eq!(client.session.composer.draft, draft);
 }
